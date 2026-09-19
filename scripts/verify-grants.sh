@@ -154,6 +154,42 @@ printf '%s' "$grants" | grep -v 'USAGE ON' | grep -q 'ON `extguard`\.\*'
 printf '%s' "$grants" | grep -q flyway_schema_history
 [ $? -ne 0 ]; check $? "flyway_schema_history 권한이 남아 있지 않음"
 
+printf "\n${BOLD}5. 재적용이 남은 권한을 거둬들이는가${OFF}\n"
+printf "  위 네 절은 새 데이터베이스만 봅니다 — 지울 것이 애초에 없으니\n"
+printf "  \"제거한다\"는 주장은 시험되지 않습니다. 권한을 일부러 넓혀 두고 확인합니다.\n"
+
+# The exact shape the old deployment left behind: a table-level SELECT this file
+# stopped granting, plus a database-wide grant. `REVOKE ... ON extguard.*` clears
+# only the second; the first is why the statement had to lose its ON clause.
+compose exec -T -e MYSQL_PWD="$ROOT_PW" mysql mysql -h mysql -uroot -e "
+  GRANT SELECT ON extguard.flyway_schema_history TO 'extguard_app'@'%';
+  GRANT SELECT, INSERT, UPDATE, DELETE ON extguard.* TO 'extguard_app'@'%';
+  FLUSH PRIVILEGES;" >/dev/null 2>&1
+
+widened=$(compose exec -T -e MYSQL_PWD="$ROOT_PW" mysql \
+  mysql -h mysql -uroot -N -B -e "SHOW GRANTS FOR 'extguard_app'@'%';" 2>&1)
+printf '%s' "$widened" | grep -q flyway_schema_history; check $? \
+  "(준비) 권한이 실제로 넓어졌는지" "$widened"
+
+compose up -d --no-deps --force-recreate grants >/dev/null 2>&1
+for _ in $(seq 1 30); do
+  state=$(docker inspect -f '{{.State.Status}}' "$(compose ps -aq grants)" 2>/dev/null)
+  [ "$state" = "exited" ] && break
+  sleep 1
+done
+
+after=$(compose exec -T -e MYSQL_PWD="$ROOT_PW" mysql \
+  mysql -h mysql -uroot -N -B -e "SHOW GRANTS FOR 'extguard_app'@'%';" 2>&1)
+printf "%s\n" "$after" | sed 's/^/      /'
+
+printf '%s' "$after" | grep -q flyway_schema_history
+[ $? -ne 0 ]; check $? "재적용이 테이블 단위 권한을 거둬들임" "$after"
+
+printf '%s' "$after" | grep -v 'USAGE ON' | grep -q 'ON `extguard`\.\*'
+[ $? -ne 0 ]; check $? "재적용이 데이터베이스 단위 권한을 거둬들임" "$after"
+
+app_cannot "SELECT COUNT(*) FROM flyway_schema_history;" "거둬들인 뒤 실제로도 거부됨"
+
 printf "\n${BOLD}결과${OFF}  통과: ${GREEN}%d${OFF}  실패: %d\n\n" "$pass" "$fail"
 
 # Dumped here rather than by the caller: the trap tears the stack down on exit,
