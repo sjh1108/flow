@@ -41,8 +41,12 @@ import java.util.Optional;
  * and the bound with it. Re-reading the total per file rather than per request
  * would replace K with one file size, at the cost of a query per file. Only a
  * reservation held across the write makes it exact, and that serialises uploads.
- * The looser bound is accepted here because {@code minFreeSpace} guards the disk
- * independently, so an overshoot costs budget accuracy rather than a failed write.
+ * The looser bound is accepted here because an overshoot costs budget accuracy
+ * rather than correctness: {@code minFreeSpace} keeps headroom on the disk, and a
+ * write that runs out of room anyway fails cleanly, leaving nothing behind. That
+ * is a smaller claim than it may look -- {@code minFreeSpace} is read once per
+ * request from a figure that other processes are already changing, so it lowers
+ * the odds of ENOSPC without ruling it out.
  */
 final class StorageBudget {
 

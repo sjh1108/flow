@@ -42,7 +42,11 @@ extguard:
     max-file-size: 20MB
     max-files-per-request: 10
     # Ceilings. The quota is this application's own budget; min-free-space
-    # guards the disk itself, which the quota knows nothing about.
+    # keeps headroom on the disk, which the quota knows nothing about. Neither
+    # is exact: both are read once per request, so overlapping requests can
+    # spend the same headroom, and free space moves under other processes
+    # regardless. They lower the odds of running out, not to zero -- a write
+    # that fails anyway cleans up after itself (see LocalFileStorage).
     quota: ${STORAGE_QUOTA:10GB}
     min-free-space: ${STORAGE_MIN_FREE_SPACE:1GB}
     # Reclaim. Files older than the retention period are deleted; their
