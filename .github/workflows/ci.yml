@@ -1,0 +1,114 @@
+# Runs the two verification layers that need no browser: the JVM test suite and
+# the end-to-end API checks against a running server.
+#
+# Why the API layer is here and not left to a reviewer's laptop: every "all
+# green" claim on PR #1 and #2 was a local run. One of them was made against a
+# stale jar -- an older process still held port 8080, so the new build never
+# bound and the old code answered. A check that runs on the pushed commit is the
+# only kind that cannot drift from what is merged.
+#
+# The browser layer (scripts/ui-verify.mjs) is deliberately absent: it needs a
+# Playwright download on every run. Add it as a separate job if the frontend
+# starts changing often enough to pay for that.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Tests and API checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # H2 in MySQL mode, so no database service is needed. The CHECK
+      # constraints that guard the fixed extensions are enforced there too,
+      # which is what makes FixedExtensionIntegrityTest meaningful.
+      - name: Unit and integration tests
+        working-directory: backend
+        run: ./gradlew test
+
+      - name: Build application jar
+        working-directory: backend
+        run: ./gradlew bootJar
+
+      - name: Start application (dev profile)
+        working-directory: backend
+        env:
+          STORAGE_ROOT: ${{ runner.temp }}/uploads
+        run: |
+          # The jar name is rootProject.name + version, so hardcoding it breaks
+          # the moment either changes -- and it would break here, at startup,
+          # rather than at the build step that produced the name. Resolve it
+          # instead. -plain.jar is the library jar Gradle emits next to the
+          # executable one when the full `build` task runs.
+          jar=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-plain.jar' | head -n 1)
+          if [ -z "$jar" ]; then
+            echo "::error::no executable jar found under backend/build/libs"
+            ls -l build/libs || true
+            exit 1
+          fi
+          echo "starting $jar"
+
+          mkdir -p "$STORAGE_ROOT"
+          nohup java -jar "$jar" \
+            --spring.profiles.active=dev > "${{ runner.temp }}/app.log" 2>&1 &
+          echo $! > "${{ runner.temp }}/app.pid"
+
+          for _ in $(seq 1 60); do
+            if curl -sf http://localhost:8080/actuator/health > /dev/null; then
+              echo "application is up"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "::error::application did not become healthy within 60s"
+          cat "${{ runner.temp }}/app.log"
+          exit 1
+
+      # The point of the whole project: policy set on the management screen is
+      # enforced on real uploads. verify.sh proves it over HTTP.
+      - name: API end-to-end checks
+        run: scripts/verify.sh http://localhost:8080
+
+      - name: Stop application
+        if: always()
+        run: |
+          pid_file="${{ runner.temp }}/app.pid"
+          [ -f "$pid_file" ] && kill "$(cat "$pid_file")" 2>/dev/null || true
+
+      - name: Upload application log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-log
+          path: ${{ runner.temp }}/app.log
+          if-no-files-found: ignore
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: backend/build/reports/tests/test
+          if-no-files-found: ignore
