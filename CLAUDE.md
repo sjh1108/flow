@@ -1,3 +1,20 @@
+# flow — 파일 확장자 차단 시스템
+
+Spring Boot 4.1 / Java 21 / MySQL 8.4 / 바닐라 JS(무의존).
+
+요구사항은 두 개이고 **둘 다 있어야 완성**이다.
+
+- **A. 정책 관리 화면** — 고정 확장자 7개(bat, cmd, com, cpl, exe, js, scr) 체크박스 +
+  커스텀 확장자 최대 200개(각 20자 이내) 추가·삭제
+- **B. 실제 업로드 강제** — A에서 설정한 정책이 진짜 업로드에서 강제될 것.
+  A만 있고 B가 없으면 미완성이다.
+
+작업 시작 전 순서대로 읽을 것:
+
+1. `docs/01-decisions.md` — 모든 설계 근거와 **지금까지 지적받아 바로잡은 오류**
+2. `docs/00-requirements-traceability.md` — 요구사항 ↔ 코드 ↔ 테스트 매핑, 검증 총계
+3. `docs/03-api.md`, `docs/04-deployment.md` — 필요할 때
+
 ## Workflow Orchestration
 
 ### 1. Plan Mode Default
@@ -68,3 +85,56 @@
   CHROMIUM=/opt/pw-browsers/chromium node scripts/ui-verify.mjs
   (설치되는 playwright 버전과 미리 깔린 chromium 리비전이 다름)
 - 프론트엔드는 frontend/에서 python3 -m http.server 8081
+
+## 검증
+
+세 계층을 전부 돌려야 "통과"라고 말할 수 있다. CI는 앞의 두 개를 자동으로 돌린다.
+
+```bash
+cd backend && ./gradlew test                              # 단위·통합
+scripts/verify.sh http://localhost:8080                   # 실행 중인 API 필요
+CHROMIUM=/opt/pw-browsers/chromium node scripts/ui-verify.mjs   # 브라우저
+```
+
+검증 **건수는 `docs/00-requirements-traceability.md`의 「검증 총계」 한 곳에서만
+관리**한다. README·02-tooling·04-deployment에는 숫자를 적지 않는다. 같은 숫자를
+네 문서에 복사했다가 세 번 어긋난 전례가 있다.
+
+## 이 도메인의 불변식 (리뷰 네 번으로 확정된 것)
+
+바꾸려면 근거를 문서에 남기고 먼저 확인받을 것.
+
+- **`DECLARING_EXTENSIONS`에 확장자를 넣는 기준은 "그 확장자가 형식 자체를 이름
+  짓는가"이지, "그 형식이 흔히 그렇게 불리는가"가 아니다.** 이 기준으로 `msi`(OLE
+  복합 문서), `bin`(범용 컨테이너), `out`(파일명 관례)을 제거했다. 기준을 느슨하게
+  하면 제거한 것들이 같은 논리로 되돌아온다.
+- **모호한 시그니처는 정직 판정의 근거가 될 수 없다.** 구분할 수 없으면 거부한다.
+  `CAFEBABE`(Java class / Mach-O fat)가 그 사례다. 값 범위로 구분하려던 이전
+  구현은 공격자가 고를 수 있는 값에 기댄 휴리스틱이라 제거했다.
+- **탐지기는 매직 넘버만 대조하며 파일 구조를 검증하지 않는다.** `PE_EXE` 보고를
+  "유효한 Windows 실행 파일"로 서술하지 말 것. 테스트 픽스처도 매직 넘버 접두사다.
+- **픽스처가 규칙을 우회하면 그 규칙은 검증되지 않는다.** 실행 파일 테스트에는
+  반드시 실제 시그니처 바이트를 쓸 것. 모든 `hello.exe` 픽스처가 텍스트였던 탓에
+  137건이 전부 통과하면서 핵심 기능의 고장을 놓친 적이 있다.
+- **고정 확장자는 데이터가 아니라 코드다.** 읽기 경로는 `FixedExtensions.ALL`을
+  순회한다. DB 행이 지워져도 화면은 7개를 렌더한다.
+
+## 확정된 결정 (재논의하지 말 것)
+
+| 항목 | 결정 |
+|---|---|
+| 백엔드 호스팅 | 기존 OCI 재사용 |
+| 프론트엔드 | 바닐라 JS, 런타임 의존성 0 |
+| 저장소 쿼터 / 보존 | 10GB / 30일 |
+| DB 마이그레이션 | one-shot 컨테이너로 분리 |
+| CAFEBABE 심화 구조 검증 | 보류 (`.class`/`.dylib` 지원이 실제 요구가 될 때 재검토) |
+
+## 남은 작업 (순서대로, 각각 별도 PR)
+
+1. ~~CI — GitHub Actions~~ (이 PR)
+2. **저장소 고갈 방어** — 쿼터 10GB / 보존 30일 cleanup, 고아 파일 정리,
+   `transferTo()` 실패 시 부분 파일(temp + ATOMIC_MOVE)
+3. **DB 권한 분리 실효화** — one-shot 마이그레이션 컨테이너, 앱 환경변수에서
+   `SPRING_FLYWAY_*` 제거
+
+미결 항목: CAFEBABE 심화 구조 검증, OLE 복합 문서 시그니처(`D0CF11E0A1B11AE1`) 추가.
