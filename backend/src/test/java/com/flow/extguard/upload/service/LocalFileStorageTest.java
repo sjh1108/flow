@@ -160,6 +160,29 @@ class LocalFileStorageTest {
         assertThat(storage.usableSpaceBytes()).isPositive();
     }
 
+    /**
+     * The listing feeds deletion, so it must not leave the tree it owns. A link
+     * planted in the storage root would otherwise hand the sweep a path outside
+     * it, and the lexical {@code startsWith(root)} guard compares text and would
+     * not notice where the link actually points.
+     */
+    @Test
+    @DisplayName("does not follow a symlink out of the storage root")
+    void listingDoesNotFollowSymlinksOutOfTheRoot(@TempDir Path outside) throws IOException {
+        Path stranger = Files.write(outside.resolve("elsewhere.bin"), CONTENT);
+        age(stranger, Instant.now().minusSeconds(7200));
+        try {
+            Files.createSymbolicLink(root.resolve("escape"), outside);
+        } catch (UnsupportedOperationException | IOException e) {
+            return; // filesystem without symlink support; nothing to prove here
+        }
+
+        List<String> listed = storage.listStoredNamesModifiedBefore(Instant.now());
+
+        assertThat(listed).as("a file outside the root is not this sweep's to delete").isEmpty();
+        assertThat(stranger).exists();
+    }
+
     // --- delete has to report what happened ---------------------------------
     // The retention job records purged_at from this result. Reporting a delete
     // that did not happen would drop the file out of the quota sum while it still

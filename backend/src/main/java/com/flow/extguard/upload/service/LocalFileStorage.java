@@ -6,7 +6,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -155,12 +154,21 @@ public class LocalFileStorage implements FileStorage {
         }
     }
 
+    /**
+     * Walks without following symbolic links, deliberately.
+     *
+     * <p>This walk feeds deletion. A link inside the storage root would otherwise
+     * send the sweep outside it, and the {@code startsWith(root)} guard in
+     * {@link #delete} is lexical -- it compares path text and would not notice
+     * that the resolved target lies elsewhere. Not following links keeps the
+     * sweep inside the tree it owns, and sidesteps loops as a side effect.
+     */
     @Override
     public List<String> listStoredNamesModifiedBefore(Instant cutoff) throws IOException {
         if (!Files.isDirectory(root)) {
             return List.of();
         }
-        try (Stream<Path> files = Files.walk(root, FileVisitOption.FOLLOW_LINKS)) {
+        try (Stream<Path> files = Files.walk(root)) {
             return files
                     .filter(path -> path.getFileName().toString().endsWith(SUFFIX))
                     .filter(path -> modifiedBefore(path, cutoff))
@@ -177,7 +185,7 @@ public class LocalFileStorage implements FileStorage {
             return 0;
         }
         List<Path> stale;
-        try (Stream<Path> files = Files.walk(root, FileVisitOption.FOLLOW_LINKS)) {
+        try (Stream<Path> files = Files.walk(root)) {
             stale = files
                     .filter(path -> path.getFileName().toString().endsWith(PART_SUFFIX))
                     .filter(path -> modifiedBefore(path, cutoff))

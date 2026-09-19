@@ -15,11 +15,20 @@ import java.util.Optional;
  * <p>Created once per request and decremented as files are accepted, so a batch
  * cannot slip past the ceiling by spending the same headroom ten times.
  *
- * <p><strong>Not synchronised, and not meant to be.</strong> Concurrent requests
- * each read usage at their own start, so the ceiling can be overshot by at most
- * (requests in flight x max file size) before the next request sees the new
- * total and refuses. Holding a reservation across the write would mean a lock or
- * a reservation table, which is not worth it for a bound this small.
+ * <p><strong>Not synchronised, and not meant to be.</strong> Usage is read once
+ * per request, so concurrent requests that start together all see the same total
+ * and each may spend against it. The overshoot is therefore bounded by what a
+ * single request can carry -- {@code maxFilesPerRequest x maxFileSize}, 200MB at
+ * the defaults -- times the number of requests in flight, not by one file size.
+ * With a 10GB quota, ten simultaneous full batches could land roughly 2GB over
+ * before the next request sees the new total and refuses.
+ *
+ * <p>Two knobs shrink that window without any locking: a lower
+ * {@code max-files-per-request} or a lower {@code max-file-size}. Re-reading the
+ * total per file instead of per request would tighten it by the batch factor at
+ * the cost of a query per file. Holding a reservation across the write, the only
+ * way to make it exact, would serialise uploads; that is not worth it here, but
+ * the bound is larger than a single file and should be read as such.
  */
 final class StorageBudget {
 

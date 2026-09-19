@@ -70,6 +70,34 @@ class StorageMaintenanceIntegrationTest extends IntegrationTestBase {
         assertThat(purgedAt).as("the record says the file is gone").isNotNull();
     }
 
+    /**
+     * ACCEPTED stays true forever, but the file behind it does not. Without
+     * {@code purgedAt} on the wire, a reader of the history cannot tell a record
+     * whose bytes are still on disk from one that outlived them.
+     */
+    @Test
+    @DisplayName("the upload history reports that a purged file is gone")
+    void historyExposesThePurgedState() throws Exception {
+        String storedName = uploadAndGetStoredName("old.txt");
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/v1/files"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$[0].purgedAt").doesNotExist());
+
+        backdate(storedName, Instant.now().minus(31, ChronoUnit.DAYS));
+        maintenance.purgeExpired();
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/v1/files"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$[0].status").value("ACCEPTED"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .jsonPath("$[0].purgedAt").exists());
+    }
+
     @Test
     @DisplayName("leaves files inside the retention period alone")
     void keepsFilesWithinRetention() throws Exception {

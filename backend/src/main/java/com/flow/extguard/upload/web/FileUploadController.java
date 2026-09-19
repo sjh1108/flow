@@ -34,9 +34,15 @@ public class FileUploadController {
     }
 
     /**
-     * @return 200 when at least one file was accepted, 422 when every file was
-     *         rejected. The body shape is identical either way, so the client
-     *         renders per-file verdicts without branching on the status.
+     * @return 200 when at least one file was accepted; 422 when every file was
+     *         rejected on its own merits, so resending them will not help; 507
+     *         when every rejection was for capacity, so the same files may
+     *         succeed once space is reclaimed.
+     *         <p>The body shape is identical in all three cases and carries the
+     *         per-file verdicts. A client should key on that body rather than on
+     *         a list of status codes -- this list has already grown once, and the
+     *         client that enumerated 200 and 422 silently discarded every verdict
+     *         in a 507 response.
      */
     // 'files' is optional at the binding layer so that a request without the part
     // reaches the service and gets the proper NO_FILE_SUBMITTED message, rather
