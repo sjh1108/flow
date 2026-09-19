@@ -34,10 +34,14 @@ public class FileUploadController {
     }
 
     /**
-     * @return 200 when at least one file was accepted; 422 when every file was
-     *         rejected on its own merits, so resending them will not help; 507
-     *         when every rejection was for capacity, so the same files may
-     *         succeed once space is reclaimed.
+     * @return 200 when at least one file was accepted; 507 when every file was
+     *         rejected and every rejection was for capacity, so the same files
+     *         may succeed once space is reclaimed; 422 when every file was
+     *         rejected and at least one of them on its own merits.
+     *         <p>422 covers the mixed batch too, where one file was blocked and
+     *         another only lacked room. The status is the batch's, not each
+     *         file's: it never promises a retry that cannot succeed, and
+     *         per-file retryability is in {@code results[].code}.
      *         <p>The body shape is identical in all three cases and carries the
      *         per-file verdicts. A client should key on that body rather than on
      *         a list of status codes -- this list has already grown once, and the

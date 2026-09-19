@@ -133,4 +133,31 @@ class StorageQuotaIntegrationTest extends IntegrationTestBase {
                 .andExpect(status().isUnprocessableContent())
                 .andExpect(jsonPath("$.results[0].code").value("EMPTY_FILE"));
     }
+
+    /**
+     * The batch that made the old wording wrong. Everything is refused, but for
+     * two different kinds of reason, so neither status is true of every file:
+     * 507 would promise a retry that cannot help the empty file, and 422 read as
+     * "resending will not help" is false for the one that only lacked room.
+     *
+     * <p>422 is the right answer because it never promises a retry that cannot
+     * succeed. What it must not be read as is "none of these can ever succeed" --
+     * hence the assertion that both codes survive in {@code results}, which is
+     * where per-file retryability actually lives.
+     */
+    @Test
+    @DisplayName("a batch refused for mixed reasons is 422 and keeps both codes")
+    void mixedRejectionReasonsAreReportedAs422() throws Exception {
+        mockMvc.perform(multipart("/api/v1/files").file(file("first.txt", filler(3000))))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(multipart("/api/v1/files")
+                        .file(file("empty.txt", new byte[0]))
+                        .file(file("roomless.txt", filler(3000))))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.acceptedCount").value(0))
+                .andExpect(jsonPath("$.rejectedCount").value(2))
+                .andExpect(jsonPath("$.results[0].code").value("EMPTY_FILE"))
+                .andExpect(jsonPath("$.results[1].code").value("STORAGE_QUOTA_EXCEEDED"));
+    }
 }

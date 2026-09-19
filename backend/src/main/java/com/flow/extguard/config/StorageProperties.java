@@ -60,11 +60,16 @@ public class StorageProperties {
     private String cleanupCron = "0 30 3 * * *";
 
     /**
-     * How many expired records the reclaim job holds in memory at a time.
+     * How many expired records the retention pass holds in memory at a time.
      *
-     * <p>Only bounds memory per round; the job walks the whole expired set either
-     * way, advancing a cursor so that a batch whose deletes fail does not block
-     * the ones behind it.
+     * <p>Only bounds memory per round; the pass walks the whole expired set
+     * either way, advancing a cursor so that a batch whose deletes fail does not
+     * block the ones behind it.
+     *
+     * <p>It bounds the retention pass only. The orphan sweep reads the whole
+     * directory listing into a list before it chunks anything, so its memory
+     * tracks the number of files past the grace period, not this value. See
+     * {@code StorageMaintenanceService#sweepOrphans}.
      */
     private int cleanupBatchSize = 500;
 

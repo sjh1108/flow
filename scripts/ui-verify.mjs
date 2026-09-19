@@ -113,9 +113,23 @@ await page.click('#custom-submit');
 await page.waitForTimeout(400);
 check('고정 확장자 입력 시 안내', (await page.textContent('#custom-input-error')).includes('고정 확장자'));
 
+// Every verdict below is read off NEWEST_RESULT rather than off ".result.is-*".
+// A bare class selector waits for "any row in that state", so an earlier row in
+// that state ends the wait immediately; the read that follows then takes the
+// first row in document order, and a row starts out .is-pending, so the stale
+// one wins until the real verdict lands. Two accidents were hiding that: the
+// reload in section 4 empties the list, and the stubbed response arrives fast
+// enough to win the race anyway. Measured -- drop the reload and it still
+// passes; add a 1.5s delay to the stub as well and section 6 reads section 3's
+// EXTENSION_BLOCKED row instead. Rows are prepended, so the row under test is
+// always :first-child, and anchoring there depends on neither accident. Every
+// upload below sends one file -- a multi-file batch prepends a row per file,
+// and :first-child would then be its last file rather than the batch.
+const NEWEST_RESULT = '#upload-results > .result:first-child';
+
 console.log('\n3. [CORE] 정책이 실제 업로드에 강제되는지');
 await page.setInputFiles('#file-input', HELLO_EXE);
-await page.waitForSelector('.result.is-accepted', { timeout: 15000 });
+await page.waitForSelector(`${NEWEST_RESULT}.is-accepted`, { timeout: 15000 });
 check('exe 미체크 상태에서 PE 시그니처 파일 업로드 성공', true);
 
 await page.click('.chip:has(.chip-label:text-is("exe")) input');
@@ -123,8 +137,8 @@ await page.waitForSelector('.chip.is-blocked', { timeout: 10000 });
 check('exe 체크박스가 차단 상태로 전환', true);
 
 await page.setInputFiles('#file-input', HELLO_EXE);
-await page.waitForSelector('.result.is-rejected', { timeout: 15000 });
-const rejected = await page.$('.result.is-rejected');
+await page.waitForSelector(`${NEWEST_RESULT}.is-rejected`, { timeout: 15000 });
+const rejected = await page.$(NEWEST_RESULT);
 const read = async (selector) => rejected.$eval(selector, (e) => e.textContent).catch(() => '');
 check('동일 파일 재업로드가 화면에서 거부됨', true);
 check('거부 사유가 exe를 명시', (await read('.result-message')).includes('exe'));
@@ -142,7 +156,7 @@ check('새로고침 후에도 커스텀 sh 유지', (await page.$$('.tag')).leng
 
 console.log('\n5. 정상 파일 / 스크립트 오류');
 await page.setInputFiles('#file-input', NOTES_TXT);
-await page.waitForSelector('.result.is-accepted', { timeout: 15000 });
+await page.waitForSelector(`${NEWEST_RESULT}.is-accepted`, { timeout: 15000 });
 check('notes.txt는 정상 업로드', true);
 check('브라우저 스크립트 오류 없음', scriptErrors.length === 0, scriptErrors.join(' | '));
 
@@ -176,8 +190,8 @@ await page.route('**/api/v1/files', async (route) => {
 });
 
 await page.setInputFiles('#file-input', NOTES_TXT);
-await page.waitForSelector('.result.is-rejected', { timeout: 15000 });
-const overQuota = await page.$('.result.is-rejected');
+await page.waitForSelector(`${NEWEST_RESULT}.is-rejected`, { timeout: 15000 });
+const overQuota = await page.$(NEWEST_RESULT);
 const readQuota = async (selector) => overQuota.$eval(selector, (e) => e.textContent).catch(() => '');
 check('507도 파일별 판정으로 렌더됨 (전송 실패 아님)',
   (await readQuota('.result-status')).includes('차단'),

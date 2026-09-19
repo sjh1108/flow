@@ -171,6 +171,10 @@ public class LocalFileStorage implements FileStorage {
      * {@link #delete} is lexical -- it compares path text and would not notice
      * that the resolved target lies elsewhere. Not following links keeps the
      * sweep inside the tree it owns, and sidesteps loops as a side effect.
+     *
+     * <p>Returns the whole matching set, so the caller holds one name per file
+     * past the cutoff. Fine while files are counted in thousands; a store of
+     * many small files is what would eventually force a stream here.
      */
     @Override
     public List<String> listStoredNamesModifiedBefore(Instant cutoff) throws IOException {

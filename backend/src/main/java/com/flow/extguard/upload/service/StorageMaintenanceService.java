@@ -39,7 +39,12 @@ public class StorageMaintenanceService {
 
     private static final Logger log = LoggerFactory.getLogger(StorageMaintenanceService.class);
 
-    /** Chunk size for the orphan sweep's name lookups. */
+    /**
+     * Chunk size for the orphan sweep's name lookups.
+     *
+     * <p>Bounds the {@code IN (...)} list handed to the database, nothing else.
+     * The listing it chunks is already fully in memory by then.
+     */
     private static final int LOOKUP_CHUNK = 500;
 
     private final FileStorage storage;
@@ -147,6 +152,17 @@ public class StorageMaintenanceService {
      * disk before its record is committed, so a fresh unaccounted file is an
      * upload in flight -- deleting it would destroy a good upload to reclaim
      * nothing.
+     *
+     * <p><strong>Memory.</strong> The listing arrives as a whole list, so this
+     * sweep holds one name per file past the grace period -- {@code
+     * cleanup-batch-size} does not bound it, and neither does {@link
+     * #LOOKUP_CHUNK}, which only splits the lookups made from that list. The
+     * quota caps bytes rather than files, so a store full of small files is the
+     * case that grows here: 10GB of 1KB files is ten million names. At that
+     * scale the listing has to become a stream, which means
+     * {@link FileStorage#listStoredNamesModifiedBefore} returning one and the
+     * caller closing it; it is not a change to make blind, so it waits for a
+     * file count that justifies it.
      */
     public int sweepOrphans() {
         Instant cutoff = Instant.now().minus(storageProperties.getOrphanGracePeriod());
