@@ -37,44 +37,39 @@ class ContentSignatureDetectorTest {
         assertThat(signature.get().family()).isEqualTo(SignatureFamily.EXECUTABLE);
     }
 
-    // --- 0xCAFEBABE: shared by Java class files and Mach-O fat binaries -------
+    // --- 0xCAFEBABE: claimed by two formats, resolvable to neither -----------
 
+    /**
+     * Java class files and Mach-O fat binaries share this magic number and read
+     * the following four bytes as different fields, with neither specification
+     * bounding its field so as to exclude the other. The detector therefore makes
+     * no determination at all rather than guessing from the value.
+     */
     @Test
-    @DisplayName("resolves CAFEBABE to a Java class by its major version")
-    void resolvesJavaClass() {
-        // minor 0, major 52 (Java 8)
-        var signature = detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34));
-
-        assertThat(signature).get().extracting(FileSignature::id).isEqualTo("JAVA_CLASS");
-    }
-
-    @Test
-    @DisplayName("resolves CAFEBABE to a Mach-O fat binary by its architecture count")
-    void resolvesMachOFat() {
-        // nfat_arch = 2
-        var signature = detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x02));
-
-        assertThat(signature).get().extracting(FileSignature::id).isEqualTo("MACH_O_FAT");
-    }
-
-    @Test
-    @DisplayName("reports CAFEBABE as ambiguous rather than guessing")
-    void reportsUnresolvableCafebabeAsAmbiguous() {
-        var weird = detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0xFF, 0xFF, 0x00, 0x00));
-        assertThat(weird).get().extracting(FileSignature::id)
-                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
-
-        var truncated = detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00));
-        assertThat(truncated).get().extracting(FileSignature::id)
-                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
-    }
-
-    @Test
-    @DisplayName("every CAFEBABE variant is still treated as executable content")
-    void allCafebabeVariantsAreExecutable() {
+    @DisplayName("reports every CAFEBABE variant as ambiguous")
+    void reportsEveryCafebabeAsAmbiguous() {
+        // class-shaped (minor 0, major 52)
         assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34)))
-                .get().extracting(FileSignature::family).isEqualTo(SignatureFamily.EXECUTABLE);
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+        // fat-shaped (nfat_arch 2)
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x02)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+        // neither shape
         assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0xFF, 0xFF, 0x00, 0x00)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+        // truncated
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+    }
+
+    @Test
+    @DisplayName("an ambiguous CAFEBABE is still executable content")
+    void ambiguousCafebabeRemainsExecutable() {
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34)))
                 .get().extracting(FileSignature::family).isEqualTo(SignatureFamily.EXECUTABLE);
     }
 

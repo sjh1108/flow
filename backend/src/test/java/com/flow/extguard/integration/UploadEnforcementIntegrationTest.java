@@ -117,14 +117,14 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
     }
 
     /**
-     * The checkbox has to govern genuine executables, not just files that happen
-     * to be named .exe. Every exe fixture here carries the PE magic number for
+     * The checkbox has to govern files whose content really is a PE image, not
+     * just files named .exe. Every exe fixture here carries the PE magic number for
      * exactly that reason -- an earlier version used text content and so passed
      * while the checkbox did nothing. (These are magic-number prefixes, not valid
      * executables; the detector inspects leading bytes only.)
      */
     @Test
-    @DisplayName("a real executable with no extension is refused whatever the policy says")
+    @DisplayName("PE-signature content with no extension is refused whatever the policy says")
     void blocksExecutableWithoutExtension() throws Exception {
         mockMvc.perform(multipart("/api/v1/files").file(file("payload", PE_BYTES)))
                 .andExpect(status().isUnprocessableEntity())
@@ -134,7 +134,7 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
     }
 
     @Test
-    @DisplayName("a real shell script is governed by the custom extension policy")
+    @DisplayName("shebang script content is governed by the custom extension policy")
     void scriptIsGovernedByPolicy() throws Exception {
         MockMultipartFile script = new MockMultipartFile("files", "deploy.sh",
                 "application/octet-stream", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8));

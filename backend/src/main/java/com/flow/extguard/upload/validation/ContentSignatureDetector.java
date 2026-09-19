@@ -29,6 +29,28 @@ public class ContentSignatureDetector {
 
     public static final int HEADER_BYTES = 512;
 
+    /**
+     * Reported for 0xCAFEBABE, which two formats claim and neither can be ruled out.
+     *
+     * <p>A Java class file reads bytes 4-7 as {@code minor_version} then
+     * {@code major_version}; a Mach-O fat binary reads the same four bytes as a
+     * single {@code uint32_t nfat_arch}. <strong>Neither specification constrains
+     * its field in a way that excludes the other</strong> -- Apple sets no upper
+     * bound on {@code nfat_arch} -- so {@code CA FE BA BE 00 00 00 34} is a valid
+     * reading of both (major 52, or 52 architectures).
+     *
+     * <p>An earlier version guessed between them by treating values below 45 as an
+     * architecture count and the rest as a Java version. That was a guess dressed
+     * up as a structural rule: an attacker simply picks {@code nfat_arch >= 45} and
+     * the file is declared a Java class. Since this detector exists to resist
+     * deliberate disguise, a field the attacker chooses freely is worthless as
+     * evidence, so no determination is made at all.
+     *
+     * <p>Callers must never treat this id as evidence that a filename matches its
+     * content -- an unresolved signature proves nothing either way.
+     */
+    public static final String AMBIGUOUS_CAFEBABE = "CAFEBABE_AMBIGUOUS";
+
     private record Magic(String id, SignatureFamily family, int offset, byte[] bytes) {
     }
 
@@ -36,9 +58,9 @@ public class ContentSignatureDetector {
             // --- executables -----------------------------------------------------
             magic("PE_EXE", SignatureFamily.EXECUTABLE, 0, 0x4D, 0x5A),                   // "MZ": .exe/.dll/.scr
             magic("ELF", SignatureFamily.EXECUTABLE, 0, 0x7F, 0x45, 0x4C, 0x46),          // Linux binary
-            // 0xCAFEBABE is shared by Java class files and Mach-O fat binaries;
-            // resolveCafebabe() below separates them. Never reported under this id.
-            magic("CAFEBABE", SignatureFamily.EXECUTABLE, 0, 0xCA, 0xFE, 0xBA, 0xBE),
+            // Shared by Java class files and Mach-O fat binaries, and not
+            // separable from the header alone -- see AMBIGUOUS_CAFEBABE.
+            magic(AMBIGUOUS_CAFEBABE, SignatureFamily.EXECUTABLE, 0, 0xCA, 0xFE, 0xBA, 0xBE),
             magic("MACH_O_32", SignatureFamily.EXECUTABLE, 0, 0xFE, 0xED, 0xFA, 0xCE),
             magic("MACH_O_64", SignatureFamily.EXECUTABLE, 0, 0xFE, 0xED, 0xFA, 0xCF),
             magic("MACH_O_LE32", SignatureFamily.EXECUTABLE, 0, 0xCE, 0xFA, 0xED, 0xFE),
@@ -70,63 +92,16 @@ public class ContentSignatureDetector {
         return new Magic(id, family, offset, bytes);
     }
 
-    /**
-     * Reported when 0xCAFEBABE cannot be resolved to one specific format.
-     *
-     * <p>Callers must not treat an ambiguous signature as evidence that a filename
-     * matches its content -- an unresolved signature proves nothing either way.
-     */
-    public static final String AMBIGUOUS_CAFEBABE = "CAFEBABE_AMBIGUOUS";
-
-    /** Lowest Java class file major_version in existence (45 = Java 1.1). */
-    private static final int MIN_JAVA_MAJOR_VERSION = 45;
-
     public Optional<FileSignature> detect(byte[] header) {
         if (header == null || header.length == 0) {
             return Optional.empty();
         }
         for (Magic candidate : MAGICS) {
             if (matches(header, candidate)) {
-                String id = "CAFEBABE".equals(candidate.id())
-                        ? resolveCafebabe(header)
-                        : candidate.id();
-                return Optional.of(new FileSignature(id, candidate.family()));
+                return Optional.of(new FileSignature(candidate.id(), candidate.family()));
             }
         }
         return Optional.empty();
-    }
-
-    /**
-     * Separates a Java class file from a Mach-O fat binary, which share the
-     * 0xCAFEBABE magic number.
-     *
-     * <p>The two formats lay out bytes 4-7 differently and the ranges do not
-     * overlap in practice:
-     *
-     * <pre>
-     *   Java class     bytes 4-5 = minor_version, bytes 6-7 = major_version (>= 45)
-     *   Mach-O fat     bytes 4-7 = nfat_arch, a big-endian count (typically 2-6)
-     * </pre>
-     *
-     * <p>No Java class file carries a major version below 45, and no fat binary
-     * bundles 45 architectures, so the boundary is unambiguous for real files.
-     * Anything that fits neither shape is reported as ambiguous rather than
-     * guessed at.
-     */
-    private static String resolveCafebabe(byte[] header) {
-        if (header.length < 8) {
-            return AMBIGUOUS_CAFEBABE;
-        }
-        int high = ((header[4] & 0xFF) << 8) | (header[5] & 0xFF);
-        int low = ((header[6] & 0xFF) << 8) | (header[7] & 0xFF);
-
-        if (low >= MIN_JAVA_MAJOR_VERSION) {
-            return "JAVA_CLASS";
-        }
-        if (high == 0 && low >= 1) {
-            return "MACH_O_FAT";
-        }
-        return AMBIGUOUS_CAFEBABE;
     }
 
     /**

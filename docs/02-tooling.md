@@ -36,7 +36,7 @@
 | **Flyway** | Boot 관리 버전 | 스키마 마이그레이션. MySQL·H2 양쪽에서 같은 DDL이 돌도록 이식 가능하게 작성 |
 | **MySQL** | 8.4 | 운영 DB. CHECK 제약(8.0.16+)이 고정 확장자 방어의 한 층 |
 | **H2** | 2.4 (MySQL 모드) | 테스트와 `dev` 프로파일. CHECK 제약을 실제로 강제하므로 무결성 테스트가 유효 |
-| **JUnit 5 + AssertJ** | Boot 관리 버전 | 단위·통합 테스트 158건 |
+| **JUnit 5 + AssertJ** | Boot 관리 버전 | 단위·통합 테스트 156건 |
 | **MockMvc** | `spring-boot-starter-webmvc-test` | HTTP 계층 통합 테스트 (Boot 4에서 별도 모듈로 분리됨) |
 | **Playwright + Chromium** | 1.x / preinstalled | 실제 브라우저에서 프론트엔드 검증 19건. 빈 오류 배너 버그는 이 단계의 스크린샷으로만 발견됨 |
 | **Docker / Compose** | — | 배포 스택(app + MySQL + Caddy) |

@@ -47,10 +47,10 @@
 
 | # | 항목 | 구현 | 검증 |
 |---|---|---|---|
-| 1-1 | 확장자 신뢰 가능성 / 매직 넘버 | `upload/validation/ContentSignatureDetector`<br>`UploadValidator` R5(위장 탐지)·R6 | `ContentSignatureDetectorTest` (12)<br>`UploadValidatorTest#rejectsExecutableDisguisedAsImage`<br>`#acceptsHonestlyNamedExecutableWhenPolicyAllowsIt`<br>`#rejectsExecutableWithoutExtension` |
+| 1-1 | 확장자 신뢰 가능성 / 매직 넘버 | `upload/validation/ContentSignatureDetector`<br>`UploadValidator` R5(위장 탐지)·R6 | `ContentSignatureDetectorTest`<br>`UploadValidatorTest#rejectsExecutableDisguisedAsImage`<br>`#acceptsHonestlyNamedExecutableWhenPolicyAllowsIt`<br>`#rejectsExecutableWithoutExtension` |
 | 1-2 | 대소문자 / 이중 확장자 / `.tar.gz` | `ExtensionNormalizer` (Locale.ROOT)<br>`FilenameAnalyzer` (확장자 체인) | `FilenameAnalyzerTest#extractsFullExtensionChain`<br>`UploadValidatorTest#blocksRegardlessOfCase` |
 | 1-3 | 확장자 없음 / `.env` / 긴 파일명 | `FilenameAnalyzer` | `FilenameAnalyzerTest` (`handlesDotfiles`, `rejectsOverlongFilename`, `measuresLengthInUtf8Bytes`) |
-| 1-4 | 확장자 입력값 검증 (특수문자·공백·유니코드·점) | `ExtensionNormalizer` (NFKC + 정규식) | `ExtensionNormalizerTest` (25) |
+| 1-4 | 확장자 입력값 검증 (특수문자·공백·유니코드·점) | `ExtensionNormalizer` (NFKC + 정규식) | `ExtensionNormalizerTest` |
 | 1-5 | 서버 사이드 검증 필요성 | 서버가 유일한 판정자, 클라이언트는 항상 전송 | `scripts/verify.sh` (curl로 클라이언트 완전 우회) |
 | 1-6 | 크기 / 개수 제한 | `application.yml` multipart + `max-part-count`<br>`UploadValidator` R2 | `UploadValidatorTest#rejectsOversizedFile` |
 | 1-7 | 원본 파일명 사용 위험 | `LocalFileStorage` (UUID 경로) | `UploadEnforcementIntegrationTest#storesAcceptedFileUnderGeneratedName`<br>`FilenameAnalyzerTest#stripsPathComponents` |
@@ -60,7 +60,7 @@
 
 | # | 항목 | 구현 | 검증 |
 |---|---|---|---|
-| 2-1 | 고정·커스텀 충돌 | `ExtensionPolicyService#addCustom` + `ck_custom_not_fixed` | `FixedExtensionIntegrityTest` (6)<br>`PolicyApiIntegrationTest#rejectsFixedExtensionAsCustom` |
+| 2-1 | 고정·커스텀 충돌 | `ExtensionPolicyService#addCustom` + `ck_custom_not_fixed` | `FixedExtensionIntegrityTest`<br>`PolicyApiIntegrationTest#rejectsFixedExtensionAsCustom` |
 | 2-2 | 변경 이력 / 감사 | `policy/domain/PolicyAuditLog`<br>`GET /api/v1/policy/audit` | `PolicyApiIntegrationTest#writesAnAuditTrail`, `#skipsAuditWhenNothingChanged` |
 | 2-3 | 200 / 20 제한 근거와 초과 UX | `PolicyProperties` + `frontend/src/policy.js` 카운터·비활성화 | `PolicyApiIntegrationTest#enforcesTheTwoHundredLimit`<br>브라우저 검증 "카운터가 1 / 200으로 갱신" |
 | 2-4 | 대량 조회 성능·인덱스 | 쿼리 2회·최대 207행, PK/UNIQUE 인덱스 | `docs/01-decisions.md` 2-4 |
@@ -86,8 +86,10 @@
 
 ## 검증 총계
 
+> 개수는 이 표 한 곳에서만 관리합니다. 클래스별 개수를 본문에 적어두면 테스트가 늘 때마다 어긋나므로(실제로 세 번 어긋났습니다) 클래스명만 참조합니다.
+
 | 계층 | 건수 | 실행 방법 |
 |---|---|---|
-| 백엔드 단위·통합 테스트 | **158** | `cd backend && ./gradlew test` |
+| 백엔드 단위·통합 테스트 | **156** | `cd backend && ./gradlew test` |
 | API 엔드투엔드 (curl) | **38** | `scripts/verify.sh` |
 | 브라우저 (Playwright + Chromium) | **19** | `docs/04-deployment.md` 참조 |

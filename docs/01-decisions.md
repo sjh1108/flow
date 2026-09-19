@@ -107,20 +107,23 @@ API 표면에서도 **고정 확장자 삭제 엔드포인트를 만들지 않�
 
 **모호한 시그니처 — CAFEBABE**
 
-`0xCAFEBABE`는 Java class와 Mach-O fat 바이너리가 공유합니다. 처음에는 두 확장자를 모두 허용 목록에 넣어 넘어갔는데, 리뷰에서 **"시그니처가 모호한데 허용 확장자만 넓혀서 해결하면 R5의 의미가 모호해진다"**는 지적을 받았습니다. 맞는 지적이고, 실제로 `Java class 내용 + malicious.dylib → ACCEPTED` 경로가 성립했습니다.
+`0xCAFEBABE`는 Java class와 Mach-O fat 바이너리가 공유합니다. 처음에는 두 확장자를 모두 허용 목록에 넣어 넘어갔고, 리뷰에서 **"시그니처가 모호한데 허용 확장자만 넓혀서 해결하면 R5의 의미가 모호해진다"**는 지적을 받았습니다.
 
-두 형식의 4~7바이트가 구조적으로 겹치지 않으므로 구분합니다.
+그래서 바이트 4-7의 값 범위로 구분하는 코드를 넣었는데, **이것도 틀렸습니다.** 3차 리뷰에서 지적받은 내용입니다.
 
-| | 바이트 4-5 | 바이트 6-7 |
-|---|---|---|
-| Java class | `minor_version` | `major_version` — **45 이상** (45 = Java 1.1) |
-| Mach-O fat | `nfat_arch` 상위 (사실상 0) | `nfat_arch` 하위 — 보통 2~6 |
+> Java class는 바이트 4-7을 `minor_version` + `major_version`으로, Mach-O fat은 같은 4바이트 전체를 `uint32_t nfat_arch`로 읽습니다. **Apple 명세는 `nfat_arch`에 상한을 두지 않습니다.**
 
-Java major는 45부터 시작하고 45개 아키텍처를 묶은 fat 바이너리는 없으므로 경계가 명확합니다. 구분되지 않는 입력은 `CAFEBABE_AMBIGUOUS`로 보고하고 **선언 매핑에 넣지 않습니다.**
+따라서 `CA FE BA BE 00 00 00 34`는 Java로도(major 52) Mach-O로도(nfat_arch 52) 유효한 해석이며, 제 코드는 `52 >= 45`라는 이유로 **추측**하고 있었습니다. 공격자는 `nfat_arch`를 45 이상으로 고르고 `payload.class`로 이름 붙이면 그대로 통과합니다.
 
-이로써 불변식 하나를 명문화했습니다 — **모호한 시그니처는 정직 판정의 근거가 될 수 없다.** 모호성을 확장자 목록 확대로 덮지 않습니다.
+제가 문서와 코드에 적었던 **"두 형식의 바이트 4-7이 구조적으로 겹치지 않는다"는 사실이 아니고**, "45개 아키텍처를 묶은 fat 바이너리는 현실에 없다"는 관찰은 맞지만 **확률적 휴리스틱을 구조적 보장처럼 서술한 것**입니다. R5는 의도적 위장을 막는 규칙이라, 공격자가 자유롭게 고르는 값에 기대는 순간 방어 가치가 사라집니다.
 
-> 구분 대신 "모호하면 전부 거부"를 택하지 않은 이유: 그러면 진짜 `.class` 파일이 `class` 미차단 상태에서도 거부되어, 이 절에서 고친 exe 버그와 **정확히 같은 형태**의 문제가 다시 생깁니다.
+**결론: 구분하지 않는다.** `0xCAFEBABE`는 언제나 `CAFEBABE_AMBIGUOUS`로 보고하고 선언 매핑에 넣지 않아, 어떤 확장자와도 정직 판정이 나지 않습니다.
+
+이로써 불변식 하나를 명문화했습니다 — **모호한 시그니처는 정직 판정의 근거가 될 수 없다.**
+
+> **남은 한계.** `.class`/`.dylib`은 커스텀 확장자로 허용해도 업로드되지 않습니다. 다만 exe 버그처럼 정책이 조용히 무시되는 것과는 성격이 다릅니다 — 거부 메시지가 *"내용이 Java class와 Mach-O fat 중 어느 것인지 확정할 수 없어 파일명과의 일치를 검증할 수 없습니다"*라고 이유를 밝힙니다. 이 앱에서 두 확장자는 엣지 케이스이므로 수용했습니다.
+
+> **추가 고려사항 (미결정).** 바이트 8 이후 구조를 보면 구분 가능성이 있습니다. Java는 `constant_pool_count >= 1`과 첫 constant pool 태그의 유효성, Mach-O는 `fat_arch[0].cputype`이 알려진 값인지. 알려진 cputype(`0x01000007` 등)은 Java 태그 검사에서 체계적으로 탈락하므로 실효성은 있습니다. 다만 ① 확장자 차단 서비스에 포맷 파서를 들이는 범위 확대이고 ② 여전히 증명이 아니라 개연성입니다. `.class`/`.dylib` 지원이 실제 요구가 될 때 재검토합니다.
 
 확장자가 없는 실행 파일을 계속 거부하는 이유가 중요합니다 — 확장자가 없으면 확장자 정책이 손댈 대상이 없어, 허용하면 `payload`(무확장자 PE)가 정책을 통째로 우회합니다.
 
@@ -139,9 +142,8 @@ Java major는 45부터 시작하고 45개 아키텍처를 묶은 fat 바이너�
 | PE 시그니처 + `installer.msi` | — | `EXECUTABLE_CONTENT` (MSI는 PE가 아님) |
 | ELF 내용 + `payload.bin` | — | `EXECUTABLE_CONTENT` (`.bin`은 선언이 아님) |
 | node shebang + `build.js` | js 미체크 / 체크 | ACCEPTED / `EXTENSION_BLOCKED` |
-| Java class + `Foo.class` / `malicious.dylib` | — | ACCEPTED / `EXECUTABLE_CONTENT` |
-| Mach-O fat + `lib.dylib` / `Foo.class` | — | ACCEPTED / `EXECUTABLE_CONTENT` |
-| 구분 불가 CAFEBABE + `.class` 또는 `.dylib` | — | 둘 다 `EXECUTABLE_CONTENT` |
+| 모든 CAFEBABE + `.class` / `.dylib` 등 | — | 전부 `EXECUTABLE_CONTENT` (모호하여 검증 불가) |
+| `nfat_arch=52` 크래프팅 + `payload.class` | — | `EXECUTABLE_CONTENT` (휴리스틱 우회 경로 차단) |
 
 > **탐지기의 한계.** `ContentSignatureDetector`는 **매직 넘버만 대조하며 파일 구조를 검증하지 않습니다.** `PE_EXE`로 보고된 파일은 `MZ`로 시작한다는 뜻일 뿐, 유효한 Windows 실행 파일이라는 보증이 아닙니다. 테스트 픽스처도 같은 이유로 매직 넘버 접두사이며, "진짜 PE 파일"이 아닙니다(2차 리뷰에서 표기가 과장이라는 지적을 받아 정정).
 

@@ -98,8 +98,9 @@ public class UploadValidator {
             "MACH_O_64", Set.of("dylib", "bundle", "o"),
             "MACH_O_LE32", Set.of("dylib", "bundle", "o"),
             "MACH_O_LE64", Set.of("dylib", "bundle", "o"),
-            "MACH_O_FAT", Set.of("dylib", "bundle"),
-            "JAVA_CLASS", Set.of("class"),
+            // No entry for 0xCAFEBABE: it is reported as ambiguous because a Java
+            // class file and a Mach-O fat binary cannot be told apart from the
+            // header, and an ambiguous signature cannot establish honest naming.
             // js/mjs/cjs matter here: js is one of the seven fixed extensions, so
             // omitting it left its checkbox unable to govern a shebang-carrying
             // .js file -- the same defect this rule was introduced to remove.
@@ -173,11 +174,20 @@ public class UploadValidator {
         // is rejected.
         if (signature != null && signature.isExecutableOrScript()
                 && !declaresItsOwnContent(extension, signature)) {
-            String detail = extension.isEmpty()
-                    ? "확장자가 없는 파일의 내용이 %s로 확인되었습니다. 확장자가 없으면 차단 정책을 적용할 수 없어 거부합니다."
-                            .formatted(signature.id())
-                    : "파일명은 '%s'이지만 실제 내용의 시그니처가 %s로, '%s' 확장자와 일치하지 않습니다."
-                            .formatted(analysis.displayFilename(), signature.id(), extension.get());
+            String detail;
+            if (ContentSignatureDetector.AMBIGUOUS_CAFEBABE.equals(signature.id())) {
+                // Explain the inability rather than implying the name was wrong:
+                // here the content itself cannot be pinned down.
+                detail = "파일 내용이 Java class와 Mach-O fat 바이너리 중 어느 것인지 확정할 수 없어, "
+                        + "파일명 '%s'이 내용을 올바르게 선언하는지 검증할 수 없습니다."
+                                .formatted(analysis.displayFilename());
+            } else if (extension.isEmpty()) {
+                detail = "확장자가 없는 파일의 내용이 %s로 확인되었습니다. 확장자가 없으면 차단 정책을 적용할 수 없어 거부합니다."
+                        .formatted(signature.id());
+            } else {
+                detail = "파일명은 '%s'이지만 실제 내용의 시그니처가 %s로, '%s' 확장자와 일치하지 않습니다."
+                        .formatted(analysis.displayFilename(), signature.id(), extension.get());
+            }
             return UploadVerdict.reject(ApiErrorCode.EXECUTABLE_CONTENT,
                     ApiErrorCode.EXECUTABLE_CONTENT.message(), detail, analysis, signature);
         }

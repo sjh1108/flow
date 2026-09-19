@@ -25,7 +25,7 @@ class UploadValidatorTest {
 
     // These are magic-number prefixes, not valid files of their formats. The
     // detector matches leading bytes only, so a prefix is all these tests need --
-    // but they should not be described as real executables.
+    // but they should not be described as executables of those formats.
     private static final byte[] PE_HEADER = new byte[]{0x4D, 0x5A, (byte) 0x90, 0x00};
     private static final byte[] ELF_HEADER = new byte[]{0x7F, 0x45, 0x4C, 0x46, 0x02};
     private static final byte[] PNG_HEADER =
@@ -33,11 +33,11 @@ class UploadValidatorTest {
     private static final byte[] NODE_SHEBANG =
             "#!/usr/bin/env node\nconsole.log(1)\n".getBytes(StandardCharsets.UTF_8);
 
-    /** 0xCAFEBABE + minor 0 + major 52 (Java 8) -- reads as a class file. */
+    /** 0xCAFEBABE shaped like a Java class (minor 0, major 52) -- but see below. */
     private static final byte[] JAVA_CLASS_HEADER = new byte[]{
             (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x34};
 
-    /** 0xCAFEBABE + nfat_arch 2 -- reads as a Mach-O fat binary. */
+    /** 0xCAFEBABE shaped like a Mach-O fat binary (nfat_arch 2). */
     private static final byte[] MACH_O_FAT_HEADER = new byte[]{
             (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x02};
 
@@ -171,22 +171,22 @@ class UploadValidatorTest {
      * The case the original rule got wrong, and that no test covered because every
      * ".exe" fixture held text rather than the PE magic number.
      *
-     * <p>A genuine executable named .exe is not in disguise. With the exe checkbox
-     * unchecked the administrator has allowed it, and the upload must honour that
-     * -- otherwise the checkbox means nothing.
+     * <p>A PE-signature fixture named .exe is not in disguise. With the exe
+     * checkbox unchecked the administrator has allowed it, and the upload must
+     * honour that -- otherwise the checkbox means nothing.
      */
     @Test
-    @DisplayName("accepts a real executable that is honestly named .exe when exe is unblocked")
+    @DisplayName("accepts a PE-signature fixture honestly named .exe when exe is unblocked")
     void acceptsHonestlyNamedExecutableWhenPolicyAllowsIt() {
         var verdict = validator.validate(candidate("setup.exe", PE_HEADER), Set.of());
 
         assertThat(verdict.accepted())
-                .as("unchecking exe must actually allow a real exe")
+                .as("unchecking exe must allow PE content named .exe")
                 .isTrue();
     }
 
     @Test
-    @DisplayName("blocks the same real executable once exe is checked")
+    @DisplayName("blocks the same PE-signature fixture once exe is checked")
     void blocksHonestlyNamedExecutableWhenPolicyForbidsIt() {
         var verdict = validator.validate(candidate("setup.exe", PE_HEADER), Set.of("exe"));
 
@@ -285,44 +285,62 @@ class UploadValidatorTest {
         assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
     }
 
-    // --- 0xCAFEBABE is shared by two formats --------------------------------
+    // --- 0xCAFEBABE: claimed by two formats, resolvable to neither -----------
 
+    /**
+     * A Java class file and a Mach-O fat binary read the same four bytes after the
+     * magic number as different fields, and neither specification bounds its field
+     * so as to exclude the other. Because the content cannot be pinned down, no
+     * name can be shown to declare it honestly, so every 0xCAFEBABE file is
+     * refused whatever it is called.
+     */
     @Test
-    @DisplayName("accepts a Java class file named .class")
-    void acceptsJavaClassNamedClass() {
-        assertThat(validator.validate(candidate("Foo.class", JAVA_CLASS_HEADER), Set.of()).accepted())
-                .isTrue();
+    @DisplayName("rejects class-shaped CAFEBABE bytes even when named .class")
+    void rejectsJavaClassBytesEvenWhenNamedClass() {
+        var verdict = validator.validate(candidate("Foo.class", JAVA_CLASS_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(verdict.detail()).contains("확정할 수 없");
     }
 
-    /** Both formats share 0xCAFEBABE; resolving which one it is prevents this. */
     @Test
-    @DisplayName("rejects Java class content wearing a .dylib name")
-    void rejectsJavaClassDisguisedAsDylib() {
-        var verdict = validator.validate(candidate("malicious.dylib", JAVA_CLASS_HEADER), Set.of());
+    @DisplayName("rejects fat-shaped CAFEBABE bytes even when named .dylib")
+    void rejectsMachOFatBytesEvenWhenNamedDylib() {
+        var verdict = validator.validate(candidate("lib.dylib", MACH_O_FAT_HEADER), Set.of());
 
         assertThat(verdict.rejected()).isTrue();
         assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
     }
 
     @Test
-    @DisplayName("accepts a Mach-O fat binary named .dylib")
-    void acceptsMachOFatNamedDylib() {
-        assertThat(validator.validate(candidate("lib.dylib", MACH_O_FAT_HEADER), Set.of()).accepted())
-                .isTrue();
-    }
-
-    @Test
-    void rejectsMachOFatDisguisedAsClass() {
-        var verdict = validator.validate(candidate("Foo.class", MACH_O_FAT_HEADER), Set.of());
-
-        assertThat(verdict.rejected()).isTrue();
-        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    void rejectsCafebabeAcrossSwappedExtensions() {
+        assertThat(validator.validate(candidate("malicious.dylib", JAVA_CLASS_HEADER), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(validator.validate(candidate("Foo.class", MACH_O_FAT_HEADER), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
     }
 
     /**
-     * When the format cannot be resolved, neither extension may be treated as an
-     * honest declaration -- an unresolved signature is evidence of nothing.
+     * Pins the bypass that the earlier version-range guess allowed. It classified
+     * bytes 6-7 below 45 as an architecture count and anything higher as a Java
+     * version, so an attacker only had to choose {@code nfat_arch >= 45} to have a
+     * Mach-O fat binary accepted as an honestly named {@code .class}.
      */
+    @Test
+    @DisplayName("a crafted nfat_arch of 52 cannot pose as a Java class")
+    void craftedNfatArchCannotPoseAsJavaClass() {
+        byte[] crafted = new byte[]{
+                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x34};
+
+        var verdict = validator.validate(candidate("payload.class", crafted), Set.of());
+
+        assertThat(verdict.rejected())
+                .as("nfat_arch has no upper bound, so this value proves nothing")
+                .isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
     @Test
     @DisplayName("rejects an unresolvable CAFEBABE under either extension")
     void rejectsAmbiguousCafebabeForBothExtensions() {
