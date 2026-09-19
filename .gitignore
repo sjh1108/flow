@@ -1,0 +1,33 @@
+# Build output
+build/
+out/
+target/
+*.jar
+# The wrapper jar must be committed or ./gradlew does not work on a fresh clone.
+# The pattern needs ** because the wrapper lives under backend/, not the repo root.
+!**/gradle/wrapper/gradle-wrapper.jar
+
+# Gradle
+.gradle/
+
+# Local runtime data
+data/
+uploads/
+
+# Secrets
+.env
+*.local
+
+# Node (only used for the browser verification script)
+node_modules/
+package-lock.json
+
+# Editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

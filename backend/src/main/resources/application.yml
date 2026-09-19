@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: extguard
+
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/extguard?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8}
+    username: ${DB_USERNAME:extguard}
+    password: ${DB_PASSWORD:extguard}
+
+  jpa:
+    # Flyway owns the schema; validate proves the entities still match it.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate.jdbc.time_zone: UTC
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      # Boot's defaults are 1MB/10MB. Raised here, but note the container rejects
+      # oversized parts before the controller runs -- GlobalExceptionHandler maps
+      # that to the same JSON error shape as an in-controller rejection.
+      max-file-size: 20MB
+      max-request-size: 210MB
+      file-size-threshold: 0B
+
+server:
+  port: ${SERVER_PORT:8080}
+  tomcat:
+    # Caps the number of multipart parts, so a request cannot arrive with
+    # thousands of tiny files. Slightly above extguard.storage.max-files-per-request
+    # to leave room for non-file form fields.
+    max-part-count: 12
+
+extguard:
+  storage:
+    root: ${STORAGE_ROOT:/var/lib/extguard/files}
+    max-file-size: 20MB
+    max-files-per-request: 10
+  policy:
+    max-custom-extensions: 200
+    max-extension-length: 20
+    check-full-extension-chain: true
+  admin:
+    # Blank disables the guard entirely so the project runs without setup.
+    token: ${EXTGUARD_ADMIN_TOKEN:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.flow.extguard: INFO

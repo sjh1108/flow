@@ -1,0 +1,28 @@
+# Automatic TLS for the API subdomain.
+#
+# Only needed if this stack terminates TLS on the instance. If another project
+# already owns ports 80/443, skip the caddy service (it sits behind the
+# "with-tls" profile and does not start by default) and add a reverse proxy
+# entry to the existing server pointing at 127.0.0.1:8080.
+
+{$API_DOMAIN} {
+	encode gzip
+
+	# The browser talks to this origin cross-origin from Vercel; the application
+	# emits its own CORS headers, so nothing is added here.
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	# Uploads are capped at 20MB per file and 10 files per request; this is the
+	# outer bound before a request even reaches the application.
+	request_body {
+		max_size 220MB
+	}
+
+	log {
+		output file /data/access.log
+		format json
+	}
+}

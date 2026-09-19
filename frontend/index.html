@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>파일 확장자 차단</title>
+
+  <!--
+    The API base is read from this tag at runtime rather than baked in at build
+    time, so the same static bundle can be deployed to any environment. Vercel
+    rewrites the content value per environment; see docs/04-deployment.md.
+  -->
+  <meta name="api-base" content="http://localhost:8080">
+
+  <link rel="stylesheet" href="./assets/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div>
+        <h1>파일 확장자 차단</h1>
+        <p class="subtitle">차단 정책을 설정하고, 실제 업로드에 적용되는지 확인합니다.</p>
+      </div>
+      <div class="admin-token">
+        <label for="admin-token-input">관리자 토큰</label>
+        <input id="admin-token-input" type="password" autocomplete="off"
+               placeholder="설정된 경우에만 입력"
+               aria-describedby="admin-token-help">
+        <p id="admin-token-help" class="hint">
+          서버에 토큰이 설정된 경우 정책 변경 시 필요합니다. 브라우저에만 저장됩니다.
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- ================= Policy ================= -->
+    <section class="card" aria-labelledby="policy-heading">
+      <div class="card-head">
+        <h2 id="policy-heading">확장자 차단 정책</h2>
+        <button id="policy-refresh" class="btn btn-ghost" type="button">새로고침</button>
+      </div>
+
+      <div id="policy-error" class="banner banner-error" hidden>
+        <span id="policy-error-text"></span>
+        <button id="policy-retry" class="btn btn-small" type="button">다시 시도</button>
+      </div>
+
+      <!-- Fixed extensions -->
+      <div class="subsection">
+        <h3>고정 확장자</h3>
+        <p class="hint">자주 차단하는 확장자입니다. 체크하면 즉시 업로드가 차단됩니다.</p>
+        <div id="fixed-list" class="chip-grid" role="group" aria-label="고정 확장자 목록">
+          <div class="skeleton-row" aria-hidden="true"></div>
+        </div>
+      </div>
+
+      <!-- Custom extensions -->
+      <div class="subsection">
+        <div class="subsection-head">
+          <h3>커스텀 확장자</h3>
+          <span id="custom-counter" class="counter" aria-live="polite">0 / 200</span>
+        </div>
+
+        <form id="custom-form" class="add-row" novalidate>
+          <label class="sr-only" for="custom-input">추가할 확장자</label>
+          <input id="custom-input" type="text" maxlength="20" autocomplete="off"
+                 placeholder="예: sh (점 없이, 최대 20자)"
+                 aria-describedby="custom-input-error">
+          <button id="custom-submit" class="btn btn-primary" type="submit">추가</button>
+        </form>
+        <p id="custom-input-error" class="field-error" role="alert" hidden></p>
+
+        <ul id="custom-list" class="tag-list" aria-label="추가된 커스텀 확장자"></ul>
+        <p id="custom-empty" class="empty-note">추가된 커스텀 확장자가 없습니다.</p>
+      </div>
+    </section>
+
+    <!-- ================= Upload ================= -->
+    <section class="card" aria-labelledby="upload-heading">
+      <div class="card-head">
+        <h2 id="upload-heading">파일 업로드</h2>
+      </div>
+      <p class="hint">
+        차단 여부는 <strong>항상 서버가 판정</strong>합니다. 아래 결과는 서버 응답을 그대로 보여줍니다.
+      </p>
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button"
+           aria-label="파일을 끌어다 놓거나 눌러서 선택">
+        <svg class="dropzone-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 16V4m0 0L8 8m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"
+                fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <p class="dropzone-title">파일을 끌어다 놓거나 클릭해서 선택</p>
+        <p class="hint" id="dropzone-limits">한 번에 최대 10개 · 파일당 최대 20MB</p>
+        <input id="file-input" type="file" multiple hidden>
+      </div>
+
+      <ul id="upload-results" class="result-list" aria-label="업로드 결과"></ul>
+    </section>
+  </main>
+
+  <footer class="wrap site-footer">
+    <p>클라이언트 검증은 즉시 피드백을 위한 것이며, 실제 차단은 서버에서 강제됩니다.</p>
+  </footer>
+
+  <div id="toasts" class="toast-stack" role="status" aria-live="polite"></div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
