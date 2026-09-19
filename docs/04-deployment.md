@@ -71,6 +71,8 @@ $EDITOR .env          # 비밀번호, 관리자 토큰, CORS 오리진 입력
 
 비밀번호는 `.env`에만 있습니다. `mysql-init/01-users.sh`가 환경변수로 읽어 계정을 만들므로 **맞출 대상이 없습니다.** 계정 생성은 데이터 볼륨이 빈 상태에서 한 번만 일어나고, 나중에 바꾸려면 `ALTER USER`를 직접 실행해야 합니다.
 
+셋 다 `openssl rand -hex 32`로 만드세요. 그중 `MIGRATOR_PASSWORD`와 `APP_DB_PASSWORD`는 SQL 리터럴에 보간되므로 **형식(영문·숫자·`_`·`-`)이 강제**되고, 어기면 계정이 만들어지지 않는 대신 스크립트가 먼저 실패합니다. `MYSQL_ROOT_PASSWORD`는 그 경로가 아니라 강제하지 않습니다.
+
 ```bash
 # 관리자 토큰 생성
 openssl rand -base64 32
