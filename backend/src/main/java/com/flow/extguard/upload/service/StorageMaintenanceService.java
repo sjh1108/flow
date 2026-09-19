@@ -6,6 +6,7 @@ import com.flow.extguard.upload.domain.UploadStatus;
 import com.flow.extguard.upload.repository.UploadRecordRepository;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -68,10 +69,12 @@ public class StorageMaintenanceService {
     /**
      * Deletes files past the retention period and marks their records.
      *
-     * <p>The file goes before the row is marked. Interrupted halfway, the row is
-     * still unmarked and the next round retries it; deleting a file that is
-     * already gone is a no-op, so the retry costs nothing. The reverse order
-     * would lose track of files that were marked but never deleted.
+     * <p>The file goes before the row is marked, and the row is marked only if
+     * the delete reported success. Interrupted halfway -- or refused by the
+     * filesystem -- the row stays unmarked and the next round retries it;
+     * deleting a file that is already gone counts as success, so the retry costs
+     * nothing. The reverse order, or marking regardless of the result, would lose
+     * track of files that were recorded as purged but are still on disk.
      *
      * <p>The transaction is opened explicitly around the update rather than by
      * annotating this method, for two reasons. {@link #runMaintenance} calls it
@@ -93,16 +96,29 @@ public class StorageMaintenanceService {
                 return total;
             }
 
-            List<Long> purgedIds = expired.stream()
-                    .peek(record -> storage.delete(record.getStoredName()))
-                    .map(UploadRecord::getId)
-                    .toList();
+            // Only files that are actually gone get marked. Marking one whose
+            // delete failed would drop it out of the quota sum while it still
+            // occupies the disk -- the budget and the disk would drift apart with
+            // nothing left to reconcile them, and the row would never be retried.
+            List<Long> purgedIds = new ArrayList<>(expired.size());
+            for (UploadRecord record : expired) {
+                if (storage.delete(record.getStoredName())) {
+                    purgedIds.add(record.getId());
+                } else {
+                    log.error("Leaving '{}' unpurged: its file could not be deleted. "
+                            + "The next run will retry it", record.getStoredName());
+                }
+            }
 
-            transactionTemplate.executeWithoutResult(
-                    ignored -> recordRepository.markPurged(purgedIds, Instant.now()));
-            total += purgedIds.size();
+            if (!purgedIds.isEmpty()) {
+                transactionTemplate.executeWithoutResult(
+                        ignored -> recordRepository.markPurged(purgedIds, Instant.now()));
+                total += purgedIds.size();
+            }
 
-            if (expired.size() < BATCH_SIZE) {
+            // Nothing marked means every delete in this page failed, and the same
+            // page would come back forever. Stop and let the next run retry.
+            if (purgedIds.isEmpty() || expired.size() < BATCH_SIZE) {
                 return total;
             }
         }
@@ -129,8 +145,11 @@ public class StorageMaintenanceService {
                 for (String candidate : chunk) {
                     if (!known.contains(candidate)) {
                         log.warn("Deleting orphaned file '{}': no upload record refers to it", candidate);
-                        storage.delete(candidate);
-                        removed++;
+                        // Counted only if it is really gone, so the reported figure
+                        // is reclaimed space rather than attempts.
+                        if (storage.delete(candidate)) {
+                            removed++;
+                        }
                     }
                 }
             }

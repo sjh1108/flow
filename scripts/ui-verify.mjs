@@ -146,6 +146,48 @@ await page.waitForSelector('.result.is-accepted', { timeout: 15000 });
 check('notes.txt는 정상 업로드', true);
 check('브라우저 스크립트 오류 없음', scriptErrors.length === 0, scriptErrors.join(' | '));
 
+// The server refuses a full disk with 507 and a per-file verdict. The client
+// used to resolve only 200 and 422, so a 507 fell through to the generic error
+// path: every row read "전송 실패" and the reason the server had filled in was
+// discarded. Stubbed rather than driven through a real full disk, because the
+// defect is in how the client reads the response, not in producing one.
+console.log('\n6. 저장 공간 부족(507) 응답 처리');
+await page.route('**/api/v1/files', async (route) => {
+  if (route.request().method() !== 'POST') return route.continue();
+  await route.fulfill({
+    status: 507,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      acceptedCount: 0,
+      rejectedCount: 1,
+      results: [{
+        filename: 'notes.txt',
+        status: 'REJECTED',
+        code: 'STORAGE_QUOTA_EXCEEDED',
+        message: '저장 공간이 부족하여 업로드할 수 없습니다. 잠시 후 다시 시도해 주세요.',
+        detail: '저장소 사용량이 한도에 도달했습니다. 남은 용량: 0B, 요청 크기: 11B',
+        recordId: 99,
+        sizeBytes: 11,
+        sha256: null,
+        detectedSignature: null,
+      }],
+    }),
+  });
+});
+
+await page.setInputFiles('#file-input', NOTES_TXT);
+await page.waitForSelector('.result.is-rejected', { timeout: 15000 });
+const overQuota = await page.$('.result.is-rejected');
+const readQuota = async (selector) => overQuota.$eval(selector, (e) => e.textContent).catch(() => '');
+check('507도 파일별 판정으로 렌더됨 (전송 실패 아님)',
+  (await readQuota('.result-status')).includes('차단'),
+  await readQuota('.result-status'));
+check('사유가 저장 공간 부족임을 명시', (await readQuota('.result-message')).includes('저장 공간'));
+check('남은 용량 detail이 표시됨', (await readQuota('.result-detail')).includes('남은 용량'));
+check('오류 코드가 STORAGE_QUOTA_EXCEEDED',
+  (await readQuota('.result-code')).trim() === 'STORAGE_QUOTA_EXCEEDED');
+await page.unroute('**/api/v1/files');
+
 if (process.env.SCREENSHOT) {
   await page.screenshot({ path: process.env.SCREENSHOT, fullPage: true });
   console.log(`\n  스크린샷: ${process.env.SCREENSHOT}`);

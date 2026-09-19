@@ -89,8 +89,14 @@ export const api = {
  * Uploads via XMLHttpRequest rather than fetch, because fetch still has no
  * upload progress events and per-file progress is worth the older API.
  *
- * Resolves for both 200 and 422: a rejection is a normal, expected outcome whose
- * body carries the per-file verdicts, not a transport failure.
+ * Resolves whenever the body carries per-file verdicts, whatever the status: a
+ * rejection is a normal, expected outcome, not a transport failure.
+ *
+ * Keyed on the body rather than on a list of status codes because the status can
+ * change without the contract changing. It already did once -- a capacity refusal
+ * became 507 while this function still listed only 200 and 422, so every file in
+ * the batch was shown as "전송 실패" and the per-file reasons the server had
+ * carefully filled in were thrown away.
  */
 export function uploadFiles(files, { onProgress } = {}) {
   return new Promise((resolve, reject) => {
@@ -114,8 +120,9 @@ export function uploadFiles(files, { onProgress } = {}) {
         reject(new NetworkError('서버 응답을 해석할 수 없습니다.'));
         return;
       }
-      // 200 = at least one accepted, 422 = all rejected. Both carry results[].
-      if (xhr.status === 200 || xhr.status === 422) {
+      // A batch verdict carries results[]; a request-level failure (no file
+      // part, too many files) carries {code, message} instead and is an error.
+      if (Array.isArray(payload?.results)) {
         resolve(payload);
       } else {
         reject(new ApiError({ ...payload, status: xhr.status }));

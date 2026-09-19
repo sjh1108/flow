@@ -9,8 +9,16 @@ public interface FileStorage {
 
     StoredFile store(InputStream content) throws IOException;
 
-    /** Compensating delete, used when the database write after a store fails. */
-    void delete(String storedName);
+    /**
+     * Deletes a stored file, reporting whether it is now gone.
+     *
+     * <p>Returns true when the file was deleted or was already absent, false when
+     * it may still be on disk. The result matters: a caller that records the
+     * deletion somewhere else -- the retention job marking {@code purged_at} --
+     * must not record one that failed, or the record and the disk drift apart
+     * with nothing left to reconcile them.
+     */
+    boolean delete(String storedName);
 
     /**
      * Stored names last modified before {@code cutoff}, for reconciliation

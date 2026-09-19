@@ -92,6 +92,32 @@ class LocalFileStorageTest {
                 .isEmpty();
     }
 
+    /**
+     * The write succeeded, so the {@code .part} is complete -- and it is exactly
+     * then that leaving it behind is worst, because it is indistinguishable from
+     * a good file to everything except the sweep 24 hours later. "A failed store
+     * leaves nothing behind" has to hold for the move too, not just the write.
+     */
+    @Test
+    @DisplayName("leaves nothing behind when the move into place fails")
+    void failedMoveLeavesNothingBehind() throws IOException {
+        StorageProperties properties = new StorageProperties();
+        properties.setRoot(root.toString());
+        LocalFileStorage failingMove = new LocalFileStorage(properties) {
+            @Override
+            void moveIntoPlace(Path partial, Path target) throws IOException {
+                throw new IOException("simulated move failure");
+            }
+        };
+
+        assertThatThrownBy(() -> failingMove.store(new ByteArrayInputStream(CONTENT)))
+                .isInstanceOf(IOException.class);
+
+        assertThat(filesOnDisk())
+                .as("a complete .part is still litter, and the sweep only finds it a day later")
+                .isEmpty();
+    }
+
     @Test
     @DisplayName("no .part file survives a successful store")
     void successfulStoreLeavesNoTempFile() throws IOException {
@@ -132,6 +158,33 @@ class LocalFileStorageTest {
     @Test
     void reportsUsableSpace() {
         assertThat(storage.usableSpaceBytes()).isPositive();
+    }
+
+    // --- delete has to report what happened ---------------------------------
+    // The retention job records purged_at from this result. Reporting a delete
+    // that did not happen would drop the file out of the quota sum while it still
+    // occupies the disk.
+
+    @Test
+    @DisplayName("reports success when the file is deleted")
+    void deleteReportsSuccess() throws IOException {
+        StoredFile stored = storage.store(new ByteArrayInputStream(CONTENT));
+
+        assertThat(storage.delete(stored.storedName())).isTrue();
+        assertThat(root.resolve(stored.storedName())).doesNotExist();
+    }
+
+    /** Already gone is the outcome the caller wanted, so it counts as success. */
+    @Test
+    @DisplayName("reports success when the file was already absent")
+    void deleteReportsSuccessWhenAlreadyGone() {
+        assertThat(storage.delete("2026/01/01/never-existed.bin")).isTrue();
+    }
+
+    @Test
+    @DisplayName("refuses and reports failure for a name escaping the root")
+    void deleteRefusesEscapingName() {
+        assertThat(storage.delete("../../etc/passwd")).isFalse();
     }
 
     private static void age(Path path, Instant to) throws IOException {

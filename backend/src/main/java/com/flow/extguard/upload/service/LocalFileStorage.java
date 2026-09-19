@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -93,25 +94,64 @@ public class LocalFileStorage implements FileStorage {
         }
 
         // Only now does the file take a name the rest of the system recognises.
-        Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE);
+        // The move needs the same cleanup as the write: it is the last step, but a
+        // failure here would leave behind a complete .part, which is exactly the
+        // litter this whole approach exists to avoid.
+        try {
+            moveIntoPlace(partial, target);
+        } catch (IOException | RuntimeException e) {
+            deleteQuietly(partial);
+            throw e;
+        }
         return new StoredFile(relativeName, written, HexFormat.of().formatHex(digest.digest()));
     }
 
+    /**
+     * Moves the finished file to its final name, atomically where the filesystem
+     * allows it.
+     *
+     * <p>Source and target are siblings, so this is a rename either way and the
+     * fallback is atomic in practice on POSIX and Windows alike. The fallback
+     * exists so that a filesystem without the explicit guarantee degrades to a
+     * plain rename rather than failing every upload.
+     *
+     * <p>Package-private so a test can make it fail: a move that throws must
+     * still leave the directory clean, and there is no portable way to make a
+     * real rename fail on demand.
+     */
+    void moveIntoPlace(Path partial, Path target) throws IOException {
+        try {
+            Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            log.warn("{} does not support atomic moves; falling back to a plain rename",
+                    target.getParent(), e);
+            Files.move(partial, target);
+        }
+    }
+
+    /**
+     * Deletes a stored file, reporting whether it is now gone.
+     *
+     * <p>Returns true when the file was removed <em>or</em> was already absent:
+     * both leave the caller with nothing on disk, which is what the caller cares
+     * about. Returns false only when the file may still be there, so that a
+     * caller recording the deletion does not record one that did not happen.
+     */
     @Override
-    public void delete(String storedName) {
+    public boolean delete(String storedName) {
         try {
             Path target = root.resolve(storedName).normalize();
             // Guard against a stored name that somehow escapes the root. Nothing
             // should be able to produce one, which is exactly why it is asserted.
             if (!target.startsWith(root)) {
                 log.error("Refusing to delete '{}': resolves outside the storage root", storedName);
-                return;
+                return false;
             }
             Files.deleteIfExists(target);
+            return true;
         } catch (IOException e) {
-            // The caller is already handling a failure; an orphaned file is the
-            // lesser problem and is recorded for later reconciliation.
-            log.error("Failed to delete '{}' while compensating for a failed write", storedName, e);
+            log.error("Failed to delete '{}'; the file is still on disk", storedName, e);
+            return false;
         }
     }
 
