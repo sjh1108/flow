@@ -56,8 +56,21 @@ jobs:
         env:
           STORAGE_ROOT: ${{ runner.temp }}/uploads
         run: |
+          # The jar name is rootProject.name + version, so hardcoding it breaks
+          # the moment either changes -- and it would break here, at startup,
+          # rather than at the build step that produced the name. Resolve it
+          # instead. -plain.jar is the library jar Gradle emits next to the
+          # executable one when the full `build` task runs.
+          jar=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-plain.jar' | head -n 1)
+          if [ -z "$jar" ]; then
+            echo "::error::no executable jar found under backend/build/libs"
+            ls -l build/libs || true
+            exit 1
+          fi
+          echo "starting $jar"
+
           mkdir -p "$STORAGE_ROOT"
-          nohup java -jar build/libs/extguard-1.0.0.jar \
+          nohup java -jar "$jar" \
             --spring.profiles.active=dev > "${{ runner.temp }}/app.log" 2>&1 &
           echo $! > "${{ runner.temp }}/app.pid"
 

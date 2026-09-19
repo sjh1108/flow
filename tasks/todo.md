@@ -15,6 +15,8 @@
 - [x] `CLAUDE.md` 보강 — 프로젝트 개요, 문서 읽는 순서, 검증 방법, 불변식,
       확정된 결정, 남은 작업
 - [x] `tasks/lessons.md` 초기 내용 — 리뷰 네 번에서 얻은 패턴 6건
+- [x] jar 이름 하드코딩 제거 — `rootProject.name` + `version`으로 정해지는 이름이라
+      버전을 올리면 기동 단계에서 깨진다. `build/libs`에서 해석하도록 변경
 - [x] 로컬 리허설 — 빌드 → 기동 → health → verify.sh 38건 통과 (exit 0)
 
 ### 결과
