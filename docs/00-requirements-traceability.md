@@ -47,7 +47,7 @@
 
 | # | 항목 | 구현 | 검증 |
 |---|---|---|---|
-| 1-1 | 확장자 신뢰 가능성 / 매직 넘버 | `upload/validation/ContentSignatureDetector`<br>`UploadValidator` R5·R6 | `ContentSignatureDetectorTest` (12)<br>`UploadValidatorTest#rejectsExecutableDisguisedAsImage` |
+| 1-1 | 확장자 신뢰 가능성 / 매직 넘버 | `upload/validation/ContentSignatureDetector`<br>`UploadValidator` R5(위장 탐지)·R6 | `ContentSignatureDetectorTest` (12)<br>`UploadValidatorTest#rejectsExecutableDisguisedAsImage`<br>`#acceptsHonestlyNamedExecutableWhenPolicyAllowsIt`<br>`#rejectsExecutableWithoutExtension` |
 | 1-2 | 대소문자 / 이중 확장자 / `.tar.gz` | `ExtensionNormalizer` (Locale.ROOT)<br>`FilenameAnalyzer` (확장자 체인) | `FilenameAnalyzerTest#extractsFullExtensionChain`<br>`UploadValidatorTest#blocksRegardlessOfCase` |
 | 1-3 | 확장자 없음 / `.env` / 긴 파일명 | `FilenameAnalyzer` | `FilenameAnalyzerTest` (`handlesDotfiles`, `rejectsOverlongFilename`, `measuresLengthInUtf8Bytes`) |
 | 1-4 | 확장자 입력값 검증 (특수문자·공백·유니코드·점) | `ExtensionNormalizer` (NFKC + 정규식) | `ExtensionNormalizerTest` (25) |
@@ -88,6 +88,6 @@
 
 | 계층 | 건수 | 실행 방법 |
 |---|---|---|
-| 백엔드 단위·통합 테스트 | **131** | `cd backend && ./gradlew test` |
-| API 엔드투엔드 (curl) | **35** | `scripts/verify.sh` |
+| 백엔드 단위·통합 테스트 | **145** | `cd backend && ./gradlew test` |
+| API 엔드투엔드 (curl) | **37** | `scripts/verify.sh` |
 | 브라우저 (Playwright + Chromium) | **19** | `docs/04-deployment.md` 참조 |

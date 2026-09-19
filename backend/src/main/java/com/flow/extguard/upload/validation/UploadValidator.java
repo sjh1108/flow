@@ -26,10 +26,22 @@ import org.springframework.stereotype.Component;
  *   R2 oversized
  *   R3 malformed filename
  *   R4 extension chain intersects the blocklist   <- the configured policy
- *   R5 content is an executable or script
+ *   R5 executable content that the extension does not honestly declare
  *   R6 content contradicts the extension
  *   R7 declared MIME contradicts content          <- logged, never rejected
  * </pre>
+ *
+ * <p><strong>R5 detects disguise, not executables.</strong> An earlier version
+ * rejected any executable content outright, which quietly made the fixed
+ * extension checkboxes meaningless: unchecking {@code exe} still could not let a
+ * real {@code .exe} through, because R5 refused it on content alone. The
+ * management screen promised something the upload path did not honour.
+ *
+ * <p>So a file whose extension honestly declares what it contains is left to the
+ * configured policy -- R4 has already decided whether that extension is allowed.
+ * R5 now fires only when the name hides the content ({@code report.jpg} holding a
+ * PE binary) or declares nothing at all ({@code payload} with no extension, which
+ * an extension policy cannot govern).
  */
 @Component
 public class UploadValidator {
@@ -54,6 +66,26 @@ public class UploadValidator {
     /** Extensions for which an embedded script marker means a polyglot webshell. */
     private static final Set<String> IMAGE_LIKE =
             Set.of("png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg");
+
+    /**
+     * Extensions that honestly declare each executable or script signature.
+     *
+     * <p>A file carrying one of these extensions is not in disguise: it says what
+     * it is, so whether it may be uploaded is the extension policy's decision
+     * rather than this rule's. Anything else carrying executable content is
+     * hiding, and R5 rejects it.
+     */
+    private static final Map<String, Set<String>> DECLARING_EXTENSIONS = Map.of(
+            "PE_EXE", Set.of("exe", "dll", "scr", "com", "sys", "msi", "ocx", "cpl", "drv", "efi"),
+            "ELF", Set.of("so", "o", "elf", "bin", "out", "ko"),
+            "MACH_O_32", Set.of("dylib", "bundle", "o"),
+            "MACH_O_64", Set.of("dylib", "bundle", "o"),
+            "MACH_O_LE32", Set.of("dylib", "bundle", "o"),
+            "MACH_O_LE64", Set.of("dylib", "bundle", "o"),
+            // CAFEBABE is both a Java class file and a Mach-O fat binary.
+            "JAVA_CLASS", Set.of("class", "dylib"),
+            "SHEBANG", Set.of("sh", "bash", "zsh", "ksh", "csh", "py", "pl", "rb", "php",
+                    "lua", "awk", "cgi"));
 
     private final PolicyProperties policyProperties;
     private final StorageProperties storageProperties;
@@ -112,16 +144,25 @@ public class UploadValidator {
                     ApiErrorCode.EXTENSION_BLOCKED.message(segment), detail, analysis, signature);
         }
 
-        // R5 -- content is executable regardless of what the name claims.
-        if (signature != null && signature.isExecutableOrScript()) {
-            String detail = "파일명은 '%s'이지만 실제 내용의 시그니처가 %s로 확인되었습니다."
-                    .formatted(analysis.displayFilename(), signature.id());
+        Optional<String> extension = analysis.effectiveExtension();
+
+        // R5 -- executable content the name does not own up to.
+        //
+        // Reaching here means R4 allowed the extension, so an honestly named
+        // executable is one the administrator has chosen to permit. Only disguise
+        // is rejected.
+        if (signature != null && signature.isExecutableOrScript()
+                && !declaresItsOwnContent(extension, signature)) {
+            String detail = extension.isEmpty()
+                    ? "확장자가 없는 파일의 내용이 %s로 확인되었습니다. 확장자가 없으면 차단 정책을 적용할 수 없어 거부합니다."
+                            .formatted(signature.id())
+                    : "파일명은 '%s'이지만 실제 내용의 시그니처가 %s로, '%s' 확장자와 일치하지 않습니다."
+                            .formatted(analysis.displayFilename(), signature.id(), extension.get());
             return UploadVerdict.reject(ApiErrorCode.EXECUTABLE_CONTENT,
                     ApiErrorCode.EXECUTABLE_CONTENT.message(), detail, analysis, signature);
         }
 
         // R5b -- polyglot: an "image" carrying server-side script markers.
-        Optional<String> extension = analysis.effectiveExtension();
         if (extension.isPresent()
                 && IMAGE_LIKE.contains(extension.get())
                 && signatureDetector.containsScriptMarkers(candidate.header())) {
@@ -151,6 +192,17 @@ public class UploadValidator {
         logDeclaredTypeMismatch(candidate, signature);
 
         return UploadVerdict.accept(analysis, signature);
+    }
+
+    /**
+     * @return true when the extension is one that legitimately carries this
+     *         signature, so the file is named honestly rather than disguised.
+     *         A file with no extension declares nothing and never qualifies.
+     */
+    private static boolean declaresItsOwnContent(Optional<String> extension, FileSignature signature) {
+        return extension
+                .map(value -> DECLARING_EXTENSIONS.getOrDefault(signature.id(), Set.of()).contains(value))
+                .orElse(false);
     }
 
     private Optional<String> firstBlockedSegment(FilenameAnalysis analysis, Set<String> blockedExtensions) {

@@ -87,11 +87,15 @@ delete_custom() {
 }
 
 # ---------------------------------------------------------------- fixtures
-printf 'hello, world\n'                 > "$WORK_DIR/hello.exe"
+# hello.exe carries REAL PE bytes, not text. An earlier version of this script
+# used text content, so the core scenario below passed while the exe checkbox
+# actually had no effect on genuine executables.
+printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/hello.exe"
+printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/payload"
+printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/report.jpg"
 printf 'hello, world\n'                 > "$WORK_DIR/notes.txt"
 printf 'hello, world\n'                 > "$WORK_DIR/invoice.pdf.exe"
-printf 'hello, world\n'                 > "$WORK_DIR/deploy.sh"
-printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/report.jpg"
+printf '#!/bin/bash\necho hi\n'         > "$WORK_DIR/deploy.sh"
 printf '\x89PNG\r\n\x1a\n rest'         > "$WORK_DIR/avatar.png"
 
 echo
@@ -121,7 +125,7 @@ echo; bold "2. [CORE] 정책이 실제 업로드에 강제되는지"; echo
 
 set_fixed exe false > /dev/null
 result=$(upload hello.exe)
-check "exe 미체크 상태에서 hello.exe 업로드 성공" "200" "$(status_of "$result")"
+check "exe 미체크 상태에서 진짜 PE 실행파일 업로드 성공" "200" "$(status_of "$result")"
 contains "결과가 ACCEPTED" '"status":"ACCEPTED"' "$(body_of "$result")"
 
 code=$(set_fixed exe true)
@@ -147,6 +151,10 @@ result=$(upload report.jpg)
 check "내용이 실행파일인 report.jpg 거부" "422" "$(status_of "$result")"
 contains "거부 코드가 EXECUTABLE_CONTENT" '"code":"EXECUTABLE_CONTENT"' "$(body_of "$result")"
 contains "탐지된 시그니처가 PE_EXE" 'PE_EXE' "$(body_of "$result")"
+
+result=$(upload payload)
+check "확장자 없는 실행파일 거부" "422" "$(status_of "$result")"
+contains "사유가 확장자 부재를 설명" '확장자가 없' "$(body_of "$result")"
 
 result=$(upload avatar.png)
 check "실제 PNG는 정상 업로드" "200" "$(status_of "$result")"

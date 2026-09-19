@@ -48,14 +48,14 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
     @Test
     @DisplayName("checking a fixed extension immediately blocks the same upload")
     void policyChangeTakesEffectOnTheNextUpload() throws Exception {
-        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", TEXT)))
+        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", PE_BYTES)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.acceptedCount").value(1))
                 .andExpect(jsonPath("$.results[0].status").value("ACCEPTED"));
 
         setFixedBlocked("exe", true);
 
-        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", TEXT)))
+        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", PE_BYTES)))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.rejectedCount").value(1))
                 .andExpect(jsonPath("$.results[0].status").value("REJECTED"))
@@ -68,11 +68,11 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
     @DisplayName("unchecking it again allows the upload once more")
     void unblockingRestoresUpload() throws Exception {
         setFixedBlocked("exe", true);
-        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", TEXT)))
+        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", PE_BYTES)))
                 .andExpect(status().isUnprocessableEntity());
 
         setFixedBlocked("exe", false);
-        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", TEXT)))
+        mockMvc.perform(multipart("/api/v1/files").file(file("hello.exe", PE_BYTES)))
                 .andExpect(status().isOk());
     }
 
@@ -99,7 +99,7 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
     void blocksUppercaseExtension() throws Exception {
         setFixedBlocked("exe", true);
 
-        mockMvc.perform(multipart("/api/v1/files").file(file("SETUP.EXE", TEXT)))
+        mockMvc.perform(multipart("/api/v1/files").file(file("SETUP.EXE", PE_BYTES)))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.results[0].code").value("EXTENSION_BLOCKED"));
     }
@@ -114,6 +114,43 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
                 .andExpect(jsonPath("$.results[0].code").value("EXTENSION_BLOCKED"))
                 .andExpect(jsonPath("$.results[0].detail").value(
                         org.hamcrest.Matchers.containsString("pdf,exe")));
+    }
+
+    /**
+     * The checkbox has to govern genuine executables, not just files that happen
+     * to be named .exe. Every exe fixture here carries real PE bytes for exactly
+     * that reason -- an earlier version of these tests used text content and so
+     * passed while the checkbox did nothing.
+     */
+    @Test
+    @DisplayName("a real executable with no extension is refused whatever the policy says")
+    void blocksExecutableWithoutExtension() throws Exception {
+        mockMvc.perform(multipart("/api/v1/files").file(file("payload", PE_BYTES)))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.results[0].code").value("EXECUTABLE_CONTENT"))
+                .andExpect(jsonPath("$.results[0].detail").value(
+                        org.hamcrest.Matchers.containsString("확장자가 없")));
+    }
+
+    @Test
+    @DisplayName("a real shell script is governed by the custom extension policy")
+    void scriptIsGovernedByPolicy() throws Exception {
+        MockMultipartFile script = new MockMultipartFile("files", "deploy.sh",
+                "application/octet-stream", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8));
+
+        mockMvc.perform(multipart("/api/v1/files").file(script))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/v1/policy/extensions/custom")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"extension\": \"sh\"}"))
+                .andExpect(status().isCreated());
+
+        MockMultipartFile again = new MockMultipartFile("files", "deploy.sh",
+                "application/octet-stream", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8));
+        mockMvc.perform(multipart("/api/v1/files").file(again))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.results[0].code").value("EXTENSION_BLOCKED"));
     }
 
     @Test
@@ -158,7 +195,7 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
     void rejectedUploadIsLoggedButNotStored() throws Exception {
         setFixedBlocked("exe", true);
 
-        mockMvc.perform(multipart("/api/v1/files").file(file("virus.exe", TEXT)))
+        mockMvc.perform(multipart("/api/v1/files").file(file("virus.exe", PE_BYTES)))
                 .andExpect(status().isUnprocessableEntity());
 
         Integer rejected = jdbc.queryForObject(

@@ -142,10 +142,83 @@ class UploadValidatorTest {
     }
 
     @Test
-    void rejectsShellScriptContentWhateverTheName() {
+    @DisplayName("rejects script content hiding under a .txt name")
+    void rejectsShellScriptDisguisedAsText() {
         var verdict = validator.validate(
                 candidate("notes.txt", "#!/bin/bash\nrm -rf /\n".getBytes(StandardCharsets.UTF_8)),
                 Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * The case the original rule got wrong, and that no test covered because every
+     * ".exe" fixture held text rather than real PE bytes.
+     *
+     * <p>A genuine executable named .exe is not in disguise. With the exe checkbox
+     * unchecked the administrator has allowed it, and the upload must honour that
+     * -- otherwise the checkbox means nothing.
+     */
+    @Test
+    @DisplayName("accepts a real executable that is honestly named .exe when exe is unblocked")
+    void acceptsHonestlyNamedExecutableWhenPolicyAllowsIt() {
+        var verdict = validator.validate(candidate("setup.exe", PE_HEADER), Set.of());
+
+        assertThat(verdict.accepted())
+                .as("unchecking exe must actually allow a real exe")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("blocks the same real executable once exe is checked")
+    void blocksHonestlyNamedExecutableWhenPolicyForbidsIt() {
+        var verdict = validator.validate(candidate("setup.exe", PE_HEADER), Set.of("exe"));
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
+    }
+
+    @Test
+    @DisplayName("accepts a real shell script named .sh when sh is unblocked")
+    void acceptsHonestlyNamedScript() {
+        var verdict = validator.validate(
+                candidate("deploy.sh", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8)),
+                Set.of());
+
+        assertThat(verdict.accepted()).isTrue();
+    }
+
+    @Test
+    void blocksHonestlyNamedScriptWhenPolicyForbidsIt() {
+        var verdict = validator.validate(
+                candidate("deploy.sh", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8)),
+                Set.of("sh"));
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
+    }
+
+    /**
+     * Without an extension the blocking policy has nothing to act on, so allowing
+     * this would let any executable through regardless of what is configured.
+     */
+    @Test
+    @DisplayName("rejects an executable with no extension at all")
+    void rejectsExecutableWithoutExtension() {
+        var verdict = validator.validate(candidate("payload", PE_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(verdict.detail()).contains("확장자가 없");
+    }
+
+    @Test
+    @DisplayName("an unrelated executable extension does not count as honest")
+    void rejectsExecutableUnderAMismatchedExecutableExtension() {
+        // ELF content under a Windows executable extension is still a disguise.
+        byte[] elf = new byte[]{0x7F, 0x45, 0x4C, 0x46, 0x02};
+        var verdict = validator.validate(candidate("setup.exe", elf), Set.of());
 
         assertThat(verdict.rejected()).isTrue();
         assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
