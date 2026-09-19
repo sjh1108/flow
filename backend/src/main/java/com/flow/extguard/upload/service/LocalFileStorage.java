@@ -40,12 +40,34 @@ import org.springframework.stereotype.Component;
  *       where the real danger lies, so this class has no read method.
  * </ul>
  *
- * <p><strong>A failed write leaves nothing behind.</strong> Content goes to a
- * {@code .part} file that is moved into place only once it is complete, so a
- * name ending in {@code .bin} always denotes a whole file. An earlier version
- * wrote straight to the final name: a write that died partway -- a full disk
- * above all -- left a half file that no record pointed at, precisely when the
- * disk could least afford it.
+ * <p><strong>What a failed write leaves behind, precisely.</strong> Content goes
+ * to a {@code .part} file and is moved into place only once complete. An earlier
+ * version wrote straight to the final name, so a write that died partway -- a
+ * full disk above all -- left a half file no record pointed at, precisely when
+ * the disk could least afford it. The rewrite is a real improvement, but it is
+ * worth being exact about how far it reaches, because "a failed write leaves
+ * nothing behind" is not true as stated:
+ *
+ * <ul>
+ *   <li><strong>Structural.</strong> A file does not carry a {@code .bin} name
+ *       before it is complete. {@link #moveIntoPlace} is the only thing that ever
+ *       creates that name, and it runs after the stream is closed.
+ *   <li><strong>True where the filesystem supports atomic moves.</strong> A
+ *       {@code .bin} is then whole or absent, never partial, because the rename
+ *       either happened or did not.
+ *   <li><strong>Attempted, not guaranteed.</strong> Both paths are deleted when a
+ *       write or a move fails -- but through {@link #deleteQuietly}, which
+ *       swallows its own {@code IOException}. A directory that refuses deletes
+ *       keeps the leftover. So does a process killed between the write and the
+ *       cleanup, which never runs it at all.
+ *   <li><strong>Backstop.</strong> Whatever survives is reclaimed by the orphan
+ *       sweep once it is past the grace period. That, not the cleanup, is what
+ *       makes the leftovers temporary.
+ * </ul>
+ *
+ * <p>The honest summary is that a failed write tries to leave nothing behind and
+ * is caught by the sweep when it cannot. Reading it as a guarantee would put
+ * weight on the third layer, which is the one that does not hold.
  */
 @Component
 public class LocalFileStorage implements FileStorage {
@@ -242,11 +264,21 @@ public class LocalFileStorage implements FileStorage {
         }
     }
 
+    /**
+     * Deletes on a best-effort basis, reporting whether the file is now gone.
+     *
+     * <p>"Quietly" is the point and the limitation. It is called from failure
+     * paths that already have an exception to throw, and a cleanup failure must
+     * not replace the original cause -- so it logs and returns instead. The
+     * callers in {@link #store} discard the result for exactly that reason,
+     * which means a refused delete leaves the file there and only the log says
+     * so. The orphan sweep is what eventually reclaims it.
+     */
     private boolean deleteQuietly(Path path) {
         try {
             return Files.deleteIfExists(path);
         } catch (IOException e) {
-            log.error("Failed to delete '{}'", path, e);
+            log.error("Failed to delete '{}'; it stays until the orphan sweep reclaims it", path, e);
             return false;
         }
     }

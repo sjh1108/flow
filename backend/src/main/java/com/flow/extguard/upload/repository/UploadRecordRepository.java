@@ -27,8 +27,14 @@ public interface UploadRecordRepository extends Repository<UploadRecord, Long> {
      *
      * <p>Read from the records rather than by walking the filesystem, so the
      * cost is one indexed aggregate instead of a directory traversal per upload.
-     * Purged rows drop out, which keeps the summed set inside the retention
-     * window however large the table grows.
+     * Rejected and already-purged rows drop out, so the sum does not grow with
+     * the audit trail however large the table gets.
+     *
+     * <p>The summed set is "accepted and not yet purged", which is not the same
+     * as "inside the retention window". A row whose file could not be deleted
+     * stays unpurged past the window and keeps counting -- deliberately, since
+     * the bytes are still on the disk. {@code StorageMaintenanceFailureIntegrationTest
+     * #unpurgedBytesStillCountAgainstTheQuota} pins that.
      */
     @Query("""
             select coalesce(sum(r.sizeBytes), 0) from UploadRecord r

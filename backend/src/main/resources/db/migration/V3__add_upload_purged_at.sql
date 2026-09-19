@@ -6,10 +6,14 @@
 -- be the wrong trade. purged_at records that the file is gone while the row
 -- remains.
 --
--- It also bounds the quota query. Live usage is the sum of size_bytes over
--- accepted, unpurged rows, so once a row is marked it drops out of the sum --
--- the set being summed stays within the retention window no matter how long the
--- audit trail grows.
+-- It also keeps the quota query small. Live usage is the sum of size_bytes over
+-- accepted, unpurged rows, so a marked row drops out: rejected uploads and
+-- already-purged ones stop counting, and the sum does not grow with the audit
+-- trail however long it gets.
+--
+-- That is not the same as bounding the set by the retention window. A row whose
+-- file cannot be deleted keeps purged_at NULL and keeps counting, which is
+-- deliberate -- the bytes really are still on the disk.
 --
 -- Portable DDL only: these migrations run against MySQL 8.4 in production and
 -- H2 in MySQL mode under test.

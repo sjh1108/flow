@@ -19,11 +19,12 @@ uploads/
 *.local
 
 # Node (only used for the browser verification script)
-# `npm install playwright` writes these; the app itself has no runtime
-# dependencies and must not gain one by way of a committed manifest.
 node_modules/
-package.json
 package-lock.json
+# Byproduct of `npm install playwright`, which the browser verification needs.
+# Anchored to the repository root on purpose: a real manifest added under
+# frontend/ or elsewhere should still be tracked.
+/package.json
 
 # Editors / OS
 .idea/

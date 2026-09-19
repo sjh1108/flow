@@ -11,8 +11,9 @@
 - [x] `StorageProperties`에 `quota`(10GB), `min-free-space`(1GB), `retention`(30d),
       `orphan-grace-period`(24h), `cleanup-cron` 추가
 - [x] `StorageBudget` — 요청당 한 번 측정하고 배치 안에서 차감. 쿼터와 디스크 여유를 각각 검사
-- [x] 사용량은 디스크가 아니라 DB 합계로 계산 (`sumLiveBytes`). purged 행이 빠지므로
-      합계 대상이 보존 창 안에 갇힘
+- [x] 사용량은 디스크가 아니라 DB 합계로 계산 (`sumLiveBytes`). 거부·purge된 행이
+      빠지므로 감사 로그가 길어져도 합계가 커지지 않음 (보존 창에 갇히는 것은 아님 —
+      삭제가 실패한 행은 계속 잡히고, 그게 의도)
 - [x] `ApiErrorCode.STORAGE_QUOTA_EXCEEDED` (507) — 거부도 `REJECTED` 기록으로 남김
 - [x] `UploadResponse.status()` — 전부 거부 + 사유가 전부 용량이면 507, 아니면 422
 
@@ -31,16 +32,20 @@
 
 ### 테스트
 
-- [x] `LocalFileStorageTest` 6건 — 실패한 쓰기가 아무것도 남기지 않음
-- [x] `StorageQuotaIntegrationTest` 6건 — 507, 기록 남김, 배치가 같은 여유를 두 번 쓰지 못함
-- [x] `StorageMaintenanceIntegrationTest` 9건 — 보존/고아/유예/멱등
+- [x] `LocalFileStorageTest` — 실패한 쓰기가 `.part`도 불완전한 `.bin`도 남기지 않음
+- [x] `StorageQuotaIntegrationTest` — 507, 기록 남김, 배치가 같은 여유를 두 번 쓰지 못함
+- [x] `StorageMaintenanceIntegrationTest` — 보존/고아/유예/멱등
 - [x] `SchemaMigrationTest`에 `purged_at` 검증 추가
 - [x] `IntegrationTestBase`가 저장소 루트도 비우도록 (누적 문제 + 스윕 테스트 오염 방지)
 
 ### 검증
 
-- [x] `./gradlew test` 179건 통과 / 0 실패
-- [x] `scripts/verify.sh` 38건, `ui-verify.mjs` 19건 회귀 없음
+> 건수는 여기 적지 않습니다. **`docs/00-requirements-traceability.md`의 「검증 총계」가
+> 유일한 출처**입니다 — 이 파일에 적었던 179·19·6·6·9가 **전부 stale이었습니다**(리뷰 지적).
+> stale해지는 것은 건수이지 통과/실패 판정이 아니므로, 판정만 남깁니다.
+
+- [x] `./gradlew test` 전부 통과 / 실패 0
+- [x] `scripts/verify.sh`, `ui-verify.mjs` 회귀 없음
 - [x] 실제 서버로 수동 확인 — 쿼터 8KB에서 5KB 두 번째 업로드가 507, 정리 작업이
       만료 파일 1건과 고아 2건을 지운 뒤 같은 업로드가 200으로 성공
 
@@ -74,11 +79,11 @@
 
 ### 검증
 
-- [x] `./gradlew test` **190건 통과 / 0 실패** (혼합 배치 1건 추가)
-- [x] `scripts/verify.sh` 38건, `ui-verify.mjs` 23건 — 2회 반복 동일
+- [x] `./gradlew test` 전부 통과 / 실패 0 (혼합 배치 케이스 추가)
+- [x] `scripts/verify.sh`, `ui-verify.mjs` 회귀 없음 — 브라우저는 2회 반복 동일
 - [x] `GET /files` 응답에 `purgedAt: null`이 문서 예시대로 실리는지 기동한 서버로 확인
-- [x] 507 경합을 **재현해서 확인** — 스텁에 1.5초 지연을 넣자 기존 셀렉터로 3건 실패,
-      앵커 셀렉터로 23건 통과
+- [x] 507 경합을 **재현해서 확인** — 스텁에 1.5초 지연을 넣자 기존 셀렉터로는 실패하고
+      앵커 셀렉터로는 전부 통과
 
 ### 결과
 
@@ -89,6 +94,43 @@
 
 혼합 배치 테스트는 **수정 전에도 통과한다.** 이번엔 구현이 옳고 문서만 틀렸으므로
 "고치기 전에 실패하는 것"이 아니라 "문서가 코드와 다른 것"이 증명 대상이었다.
+
+---
+
+## 리뷰 대응 — 과장된 보장 6건
+
+**여섯 건 다 구현이 아니라 서술 문제였고, 두 건은 문장 안에서 앞뒤가 모순이었다.**
+
+- [x] 경합 수식의 조건 해석이 뒤집힘 — `Q − U ≥ K`를 "천장에 붙었을 때"로 옮겼는데
+      정반대. 실제 초과량 `max(0, N·min(R,K) − R)`을 구간별로 적고, `R = K`에서
+      최대이며 `R = N·K`에서 0이 된다는 것까지. 표에 `R`과 상한 열을 나란히 넣어
+      본문 식으로 검산되게 함
+- [x] "실패하면 아무것도 남지 않는다" — `deleteQuietly`가 `IOException`을 삼키므로
+      정리 자체가 실패할 수 있다. 네 층(구조적 / `ATOMIC_MOVE` 한정 / 시도 /
+      스윕 회수)으로 분리
+- [x] "합계 대상이 보존 창 안에 갇힌다" — 삭제 실패 행은 계속 잡힌다.
+      `unpurgedBytesStillCountAgainstTheQuota`가 이미 반례였다
+- [x] `todo.md`의 건수 전부 제거 — 179·19·6·6·9가 모두 stale이었다
+- [x] `.gitignore` `/package.json`으로 루트 한정
+- [x] 커서용 복합 인덱스는 한계만 기록하고 다음 PR로 (마이그레이션을 거기서 다룸)
+
+### 검증
+
+- [x] 초과량 식을 스크립트로 `R`에 대해 훑어 최댓값 위치와 0이 되는 지점을 확인.
+      문서 표의 모든 행이 식과 일치
+- [x] `git check-ignore -v`로 루트만 무시되고 `frontend/package.json`은 추적되는지 확인
+- [x] `./gradlew test` 전부 통과 / 실패 0
+- [x] `scripts/verify.sh`, `ui-verify.mjs` 회귀 없음
+
+### 결과
+
+**철회한 과장의 대체 문장이 또 과장이었다.** `min-free-space`를 낮추면서 그 자리에
+놓은 "실제 보장은 쓰레기가 남지 않는다까지"가 바로 다음 지적을 받았다. 과장을
+고치는 순간이 "이번엔 약하게 적었다"는 기분 때문에 가장 위험하다. `lessons.md`
+8번에 그 항목을 덧붙이고, 10번(수식을 적었으면 표를 그 식으로 검산한다)을 추가했다.
+
+지적 1은 **파이썬 다섯 줄로 `R`을 훑었으면 바로 나왔다.** 유도를 적어 놓고 자기
+예시에 대입해 보지 않은 것이다.
 
 ---
 
