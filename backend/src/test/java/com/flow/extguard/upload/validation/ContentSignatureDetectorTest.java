@@ -37,6 +37,42 @@ class ContentSignatureDetectorTest {
         assertThat(signature.get().family()).isEqualTo(SignatureFamily.EXECUTABLE);
     }
 
+    // --- 0xCAFEBABE: claimed by two formats, resolvable to neither -----------
+
+    /**
+     * Java class files and Mach-O fat binaries share this magic number and read
+     * the following four bytes as different fields, with neither specification
+     * bounding its field so as to exclude the other. The detector therefore makes
+     * no determination at all rather than guessing from the value.
+     */
+    @Test
+    @DisplayName("reports every CAFEBABE variant as ambiguous")
+    void reportsEveryCafebabeAsAmbiguous() {
+        // class-shaped (minor 0, major 52)
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+        // fat-shaped (nfat_arch 2)
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x02)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+        // neither shape
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0xFF, 0xFF, 0x00, 0x00)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+        // truncated
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00)))
+                .get().extracting(FileSignature::id)
+                .isEqualTo(ContentSignatureDetector.AMBIGUOUS_CAFEBABE);
+    }
+
+    @Test
+    @DisplayName("an ambiguous CAFEBABE is still executable content")
+    void ambiguousCafebabeRemainsExecutable() {
+        assertThat(detector.detect(bytes(0xCA, 0xFE, 0xBA, 0xBE, 0x00, 0x00, 0x00, 0x34)))
+                .get().extracting(FileSignature::family).isEqualTo(SignatureFamily.EXECUTABLE);
+    }
+
     @Test
     void detectsShebangScript() {
         var signature = detector.detect("#!/bin/sh\necho hi\n".getBytes(StandardCharsets.UTF_8));

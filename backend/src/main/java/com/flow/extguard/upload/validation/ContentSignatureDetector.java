@@ -16,11 +16,40 @@ import org.springframework.stereotype.Component;
  *
  * <p>Only the first {@link #HEADER_BYTES} bytes are ever examined, so this stays
  * cheap and never pulls a whole upload into memory.
+ *
+ * <p><strong>This matches magic numbers; it does not validate file structure.</strong>
+ * A file reported as {@code PE_EXE} starts with the bytes {@code MZ} -- it has not
+ * been parsed, and its headers, sections and entry point are never checked. That is
+ * the right trade for this purpose (the question is "what is this pretending to
+ * be?", not "is this a well-formed binary?"), but it means a report of {@code PE_EXE}
+ * must not be read as "this is a valid Windows executable".
  */
 @Component
 public class ContentSignatureDetector {
 
     public static final int HEADER_BYTES = 512;
+
+    /**
+     * Reported for 0xCAFEBABE, which two formats claim and neither can be ruled out.
+     *
+     * <p>A Java class file reads bytes 4-7 as {@code minor_version} then
+     * {@code major_version}; a Mach-O fat binary reads the same four bytes as a
+     * single {@code uint32_t nfat_arch}. <strong>Neither specification constrains
+     * its field in a way that excludes the other</strong> -- Apple sets no upper
+     * bound on {@code nfat_arch} -- so {@code CA FE BA BE 00 00 00 34} is a valid
+     * reading of both (major 52, or 52 architectures).
+     *
+     * <p>An earlier version guessed between them by treating values below 45 as an
+     * architecture count and the rest as a Java version. That was a guess dressed
+     * up as a structural rule: an attacker simply picks {@code nfat_arch >= 45} and
+     * the file is declared a Java class. Since this detector exists to resist
+     * deliberate disguise, a field the attacker chooses freely is worthless as
+     * evidence, so no determination is made at all.
+     *
+     * <p>Callers must never treat this id as evidence that a filename matches its
+     * content -- an unresolved signature proves nothing either way.
+     */
+    public static final String AMBIGUOUS_CAFEBABE = "CAFEBABE_AMBIGUOUS";
 
     private record Magic(String id, SignatureFamily family, int offset, byte[] bytes) {
     }
@@ -29,7 +58,9 @@ public class ContentSignatureDetector {
             // --- executables -----------------------------------------------------
             magic("PE_EXE", SignatureFamily.EXECUTABLE, 0, 0x4D, 0x5A),                   // "MZ": .exe/.dll/.scr
             magic("ELF", SignatureFamily.EXECUTABLE, 0, 0x7F, 0x45, 0x4C, 0x46),          // Linux binary
-            magic("JAVA_CLASS", SignatureFamily.EXECUTABLE, 0, 0xCA, 0xFE, 0xBA, 0xBE),   // also Mach-O fat
+            // Shared by Java class files and Mach-O fat binaries, and not
+            // separable from the header alone -- see AMBIGUOUS_CAFEBABE.
+            magic(AMBIGUOUS_CAFEBABE, SignatureFamily.EXECUTABLE, 0, 0xCA, 0xFE, 0xBA, 0xBE),
             magic("MACH_O_32", SignatureFamily.EXECUTABLE, 0, 0xFE, 0xED, 0xFA, 0xCE),
             magic("MACH_O_64", SignatureFamily.EXECUTABLE, 0, 0xFE, 0xED, 0xFA, 0xCF),
             magic("MACH_O_LE32", SignatureFamily.EXECUTABLE, 0, 0xCE, 0xFA, 0xED, 0xFE),

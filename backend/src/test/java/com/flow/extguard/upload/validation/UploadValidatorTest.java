@@ -22,9 +22,24 @@ class UploadValidatorTest {
             new ContentSignatureDetector());
 
     private static final byte[] TEXT = "hello, world".getBytes(StandardCharsets.UTF_8);
+
+    // These are magic-number prefixes, not valid files of their formats. The
+    // detector matches leading bytes only, so a prefix is all these tests need --
+    // but they should not be described as executables of those formats.
     private static final byte[] PE_HEADER = new byte[]{0x4D, 0x5A, (byte) 0x90, 0x00};
+    private static final byte[] ELF_HEADER = new byte[]{0x7F, 0x45, 0x4C, 0x46, 0x02};
     private static final byte[] PNG_HEADER =
             new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    private static final byte[] NODE_SHEBANG =
+            "#!/usr/bin/env node\nconsole.log(1)\n".getBytes(StandardCharsets.UTF_8);
+
+    /** 0xCAFEBABE shaped like a Java class (minor 0, major 52) -- but see below. */
+    private static final byte[] JAVA_CLASS_HEADER = new byte[]{
+            (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x34};
+
+    /** 0xCAFEBABE shaped like a Mach-O fat binary (nfat_arch 2). */
+    private static final byte[] MACH_O_FAT_HEADER = new byte[]{
+            (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x02};
 
     private UploadCandidate candidate(String filename, byte[] header) {
         return new UploadCandidate(filename, header.length, "application/octet-stream", header);
@@ -142,13 +157,215 @@ class UploadValidatorTest {
     }
 
     @Test
-    void rejectsShellScriptContentWhateverTheName() {
+    @DisplayName("rejects script content hiding under a .txt name")
+    void rejectsShellScriptDisguisedAsText() {
         var verdict = validator.validate(
                 candidate("notes.txt", "#!/bin/bash\nrm -rf /\n".getBytes(StandardCharsets.UTF_8)),
                 Set.of());
 
         assertThat(verdict.rejected()).isTrue();
         assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * The case the original rule got wrong, and that no test covered because every
+     * ".exe" fixture held text rather than the PE magic number.
+     *
+     * <p>A PE-signature fixture named .exe is not in disguise. With the exe
+     * checkbox unchecked the administrator has allowed it, and the upload must
+     * honour that -- otherwise the checkbox means nothing.
+     */
+    @Test
+    @DisplayName("accepts a PE-signature fixture honestly named .exe when exe is unblocked")
+    void acceptsHonestlyNamedExecutableWhenPolicyAllowsIt() {
+        var verdict = validator.validate(candidate("setup.exe", PE_HEADER), Set.of());
+
+        assertThat(verdict.accepted())
+                .as("unchecking exe must allow PE content named .exe")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("blocks the same PE-signature fixture once exe is checked")
+    void blocksHonestlyNamedExecutableWhenPolicyForbidsIt() {
+        var verdict = validator.validate(candidate("setup.exe", PE_HEADER), Set.of("exe"));
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
+    }
+
+    @Test
+    @DisplayName("accepts a real shell script named .sh when sh is unblocked")
+    void acceptsHonestlyNamedScript() {
+        var verdict = validator.validate(
+                candidate("deploy.sh", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8)),
+                Set.of());
+
+        assertThat(verdict.accepted()).isTrue();
+    }
+
+    @Test
+    void blocksHonestlyNamedScriptWhenPolicyForbidsIt() {
+        var verdict = validator.validate(
+                candidate("deploy.sh", "#!/bin/bash\necho hi\n".getBytes(StandardCharsets.UTF_8)),
+                Set.of("sh"));
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
+    }
+
+    /**
+     * Without an extension the blocking policy has nothing to act on, so allowing
+     * this would let any executable through regardless of what is configured.
+     */
+    @Test
+    @DisplayName("rejects an executable with no extension at all")
+    void rejectsExecutableWithoutExtension() {
+        var verdict = validator.validate(candidate("payload", PE_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(verdict.detail()).contains("확장자가 없");
+    }
+
+    @Test
+    @DisplayName("an unrelated executable extension does not count as honest")
+    void rejectsExecutableUnderAMismatchedExecutableExtension() {
+        // ELF content under a Windows executable extension is still a disguise.
+        var verdict = validator.validate(candidate("setup.exe", ELF_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * An MSI is an OLE compound document, not a PE. Listing {@code msi} as a PE
+     * extension let a PE binary named {@code installer.msi} read as honestly named
+     * and be accepted whenever {@code msi} was not explicitly blocked.
+     */
+    @Test
+    @DisplayName("rejects a PE binary disguised as an .msi installer")
+    void rejectsPeExecutableDisguisedAsMsi() {
+        var verdict = validator.validate(candidate("installer.msi", PE_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * {@code .bin} is a generic container extension. It declares nothing about the
+     * format inside, so it cannot serve as an honest declaration of an ELF binary.
+     */
+    @Test
+    @DisplayName("rejects an ELF binary under the generic .bin extension")
+    void rejectsElfDisguisedAsGenericBin() {
+        var verdict = validator.validate(candidate("payload.bin", ELF_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * {@code .out} is a filename convention rather than a format. A compiler
+     * writes {@code a.out} when given no {@code -o}, but the same extension names
+     * redirected output just as often, so it declares nothing about the content.
+     */
+    @Test
+    @DisplayName("rejects an ELF binary under the conventional .out extension")
+    void rejectsElfUnderConventionalOutExtension() {
+        var verdict = validator.validate(candidate("results.out", ELF_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    // --- js is a fixed extension, so its checkbox has to govern -------------
+
+    @Test
+    @DisplayName("accepts a shebang .js file when js is unblocked")
+    void acceptsJavaScriptWithShebangWhenJsUnblocked() {
+        var verdict = validator.validate(candidate("build.js", NODE_SHEBANG), Set.of());
+
+        assertThat(verdict.accepted())
+                .as("js is one of the seven fixed extensions; unchecking it must allow the file")
+                .isTrue();
+    }
+
+    @Test
+    void blocksJavaScriptWithShebangWhenJsChecked() {
+        var verdict = validator.validate(candidate("build.js", NODE_SHEBANG), Set.of("js"));
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
+    }
+
+    // --- 0xCAFEBABE: claimed by two formats, resolvable to neither -----------
+
+    /**
+     * A Java class file and a Mach-O fat binary read the same four bytes after the
+     * magic number as different fields, and neither specification bounds its field
+     * so as to exclude the other. Because the content cannot be pinned down, no
+     * name can be shown to declare it honestly, so every 0xCAFEBABE file is
+     * refused whatever it is called.
+     */
+    @Test
+    @DisplayName("rejects class-shaped CAFEBABE bytes even when named .class")
+    void rejectsJavaClassBytesEvenWhenNamedClass() {
+        var verdict = validator.validate(candidate("Foo.class", JAVA_CLASS_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(verdict.detail()).contains("확정할 수 없");
+    }
+
+    @Test
+    @DisplayName("rejects fat-shaped CAFEBABE bytes even when named .dylib")
+    void rejectsMachOFatBytesEvenWhenNamedDylib() {
+        var verdict = validator.validate(candidate("lib.dylib", MACH_O_FAT_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    @Test
+    void rejectsCafebabeAcrossSwappedExtensions() {
+        assertThat(validator.validate(candidate("malicious.dylib", JAVA_CLASS_HEADER), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(validator.validate(candidate("Foo.class", MACH_O_FAT_HEADER), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * Pins the bypass that the earlier version-range guess allowed. It classified
+     * bytes 6-7 below 45 as an architecture count and anything higher as a Java
+     * version, so an attacker only had to choose {@code nfat_arch >= 45} to have a
+     * Mach-O fat binary accepted as an honestly named {@code .class}.
+     */
+    @Test
+    @DisplayName("a crafted nfat_arch of 52 cannot pose as a Java class")
+    void craftedNfatArchCannotPoseAsJavaClass() {
+        byte[] crafted = new byte[]{
+                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x34};
+
+        var verdict = validator.validate(candidate("payload.class", crafted), Set.of());
+
+        assertThat(verdict.rejected())
+                .as("nfat_arch has no upper bound, so this value proves nothing")
+                .isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    @Test
+    @DisplayName("rejects an unresolvable CAFEBABE under either extension")
+    void rejectsAmbiguousCafebabeForBothExtensions() {
+        byte[] ambiguous = new byte[]{
+                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,
+                (byte) 0xFF, (byte) 0xFF, 0x00, 0x00};
+
+        assertThat(validator.validate(candidate("Foo.class", ambiguous), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(validator.validate(candidate("lib.dylib", ambiguous), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
     }
 
     @Test

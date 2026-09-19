@@ -48,10 +48,12 @@ http://localhost:8081 을 엽니다.
 ## 검증
 
 ```bash
-cd backend && ./gradlew test        # 131건
-scripts/verify.sh                   # 35건 (실행 중인 API 대상)
-node scripts/ui-verify.mjs          # 19건 (npm install playwright 필요)
+cd backend && ./gradlew test        # 단위·통합 테스트
+scripts/verify.sh                   # API 엔드투엔드 (실행 중인 API 대상)
+node scripts/ui-verify.mjs          # 브라우저 (npm install playwright 필요)
 ```
+
+검증 건수는 [`docs/00-requirements-traceability.md`](docs/00-requirements-traceability.md)의 「검증 총계」 한 곳에서만 관리합니다.
 
 ## 구조
 
@@ -74,7 +76,9 @@ scripts/     verify.sh (API) · ui-verify.mjs (브라우저)
 | `ＥＸＥ` (전각) | 차단 — 동형 문자 접힘 |
 | `invoice.pdf.exe` | 차단 — 확장자 체인 `[pdf, exe]` 전체 검사 |
 | `evil.exe.` (후행 점) | 차단 — Windows가 점을 지우기 전에 먼저 제거 |
-| `report.jpg` (내용은 PE 바이너리) | `EXECUTABLE_CONTENT` — 매직 넘버 검사 |
+| `report.jpg` (내용은 PE 바이너리) | `EXECUTABLE_CONTENT` — 매직 넘버로 위장 탐지 |
+| `payload` (확장자 없는 PE 바이너리) | `EXECUTABLE_CONTENT` — 확장자가 없으면 정책이 손댈 수 없음 |
+| `setup.exe` (PE 시그니처, exe 미체크) | **허용** — 정직하게 이름 붙은 파일은 확장자 정책이 판단 |
 | `avatar.png` (내용에 `<?php`) | `EXECUTABLE_CONTENT` — 폴리글롯 웹셸 |
 | `../../etc/passwd` | 경로 성분 제거. 저장 경로에 사용자 입력이 아예 들어가지 않음 |
 | `CON.txt` | `FILENAME_RESERVED` |
@@ -93,6 +97,8 @@ EXTENSION_BLOCKED
 **고정 확장자는 데이터가 아니라 코드입니다.** 7개 목록은 `FixedExtensions.ALL` 상수이고, DB에는 토글 상태만 있습니다. 누가 DB 행을 지워도 화면은 여전히 체크박스 7개를 그립니다. 여기에 리포지토리 분리·CHECK 제약 2종·DB 권한 축소를 더해 네 겹으로 막았습니다. 이 설계는 리뷰 지적으로 바뀐 것이며 경위는 [docs/01-decisions.md 1절](docs/01-decisions.md)에 있습니다.
 
 **MIME 타입으로는 아무것도 판단하지 않습니다.** 브라우저가 보내는 `Content-Type`은 공격자가 바꿀 수 있고 정상 파일에서도 자주 틀립니다. 거부 근거로 쓰면 보안은 안 늘고 오탐만 늡니다. 기록만 하고 판단은 내용 시그니처로 합니다.
+
+**내용 검사는 "위장"만 잡습니다.** 내용이 PE인 파일이 정직하게 `.exe`라고 이름 붙어 있으면 확장자 정책이 판단합니다. 그러지 않으면 `exe` 체크를 해제해도 실행 파일이 계속 막혀서, 체크박스가 지키지 못할 약속을 하게 됩니다. 확장자가 아예 없는 실행 파일은 정책이 손댈 대상이 없으므로 그대로 거부합니다.
 
 **클라이언트는 차단 대상인 걸 알아도 요청을 보냅니다.** 화면에 뜨는 판정은 언제나 서버 응답입니다. 클라이언트가 막아버리면 서버가 강제한다는 사실이 증명되지 않기 때문입니다.
 

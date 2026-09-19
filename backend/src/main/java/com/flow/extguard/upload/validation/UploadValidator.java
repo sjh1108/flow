@@ -26,10 +26,22 @@ import org.springframework.stereotype.Component;
  *   R2 oversized
  *   R3 malformed filename
  *   R4 extension chain intersects the blocklist   <- the configured policy
- *   R5 content is an executable or script
+ *   R5 executable content that the extension does not honestly declare
  *   R6 content contradicts the extension
  *   R7 declared MIME contradicts content          <- logged, never rejected
  * </pre>
+ *
+ * <p><strong>R5 detects disguise, not executables.</strong> An earlier version
+ * rejected any executable content outright, which quietly made the fixed
+ * extension checkboxes meaningless: unchecking {@code exe} still could not let a
+ * real {@code .exe} through, because R5 refused it on content alone. The
+ * management screen promised something the upload path did not honour.
+ *
+ * <p>So a file whose extension honestly declares what it contains is left to the
+ * configured policy -- R4 has already decided whether that extension is allowed.
+ * R5 now fires only when the name hides the content ({@code report.jpg} holding a
+ * PE binary) or declares nothing at all ({@code payload} with no extension, which
+ * an extension policy cannot govern).
  */
 @Component
 public class UploadValidator {
@@ -54,6 +66,61 @@ public class UploadValidator {
     /** Extensions for which an embedded script marker means a polyglot webshell. */
     private static final Set<String> IMAGE_LIKE =
             Set.of("png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg");
+
+    /**
+     * Extensions that honestly declare each executable or script signature.
+     *
+     * <p>A file carrying one of these extensions is not in disguise: it says what
+     * it is, so whether it may be uploaded is the extension policy's decision
+     * rather than this rule's. Anything else carrying executable content is
+     * hiding, and R5 rejects it.
+     *
+     * <p>Two rules keep this table honest, both learned from review findings:
+     *
+     * <ul>
+     *   <li><strong>An extension belongs here only if it names the format
+     *       itself.</strong> The test is whether someone reading the extension
+     *       would expect this exact format, not whether files of this format are
+     *       commonly called that. Three entries failed it:
+     *       <ul>
+     *         <li>{@code msi} under {@code PE_EXE} -- an MSI is an OLE compound
+     *             document, not a PE, so a PE binary named {@code evil.msi} read
+     *             as honest.
+     *         <li>{@code bin} under {@code ELF} -- a generic container extension
+     *             that declares nothing, so an ELF named {@code payload.bin} was
+     *             slipping through.
+     *         <li>{@code out} under {@code ELF} -- a filename convention, not a
+     *             format. A compiler with no {@code -o} writes {@code a.out}, but
+     *             {@code .out} is just as often a redirected log, so
+     *             {@code results.out} carrying an ELF is concealment.
+     *       </ul>
+     *       The cost is that an honestly named {@code a.out} cannot be uploaded
+     *       even while {@code out} is unblocked. That is accepted: the alternative
+     *       is treating a name that says nothing as if it said something, which is
+     *       how {@code payload.bin} got through.
+     *   <li><strong>An ambiguous signature is never grounds for honesty.</strong>
+     *       Listing every extension a signature <em>might</em> belong to would
+     *       dissolve the meaning of this rule. Signatures the detector cannot pin
+     *       down (see {@link ContentSignatureDetector#AMBIGUOUS_CAFEBABE}) are
+     *       absent from this map, so they never match and are rejected.
+     * </ul>
+     */
+    private static final Map<String, Set<String>> DECLARING_EXTENSIONS = Map.of(
+            "PE_EXE", Set.of("exe", "dll", "scr", "com", "sys", "ocx", "cpl", "drv", "efi"),
+            "ELF", Set.of("so", "o", "elf", "ko"),
+            "MACH_O_32", Set.of("dylib", "bundle", "o"),
+            "MACH_O_64", Set.of("dylib", "bundle", "o"),
+            "MACH_O_LE32", Set.of("dylib", "bundle", "o"),
+            "MACH_O_LE64", Set.of("dylib", "bundle", "o"),
+            // No entry for 0xCAFEBABE: it is reported as ambiguous because a Java
+            // class file and a Mach-O fat binary cannot be told apart from the
+            // header, and an ambiguous signature cannot establish honest naming.
+            // js/mjs/cjs matter here: js is one of the seven fixed extensions, so
+            // omitting it left its checkbox unable to govern a shebang-carrying
+            // .js file -- the same defect this rule was introduced to remove.
+            "SHEBANG", Set.of("sh", "bash", "zsh", "ksh", "csh", "fish", "tcl",
+                    "py", "pl", "rb", "php", "lua", "awk", "cgi",
+                    "js", "mjs", "cjs"));
 
     private final PolicyProperties policyProperties;
     private final StorageProperties storageProperties;
@@ -112,16 +179,34 @@ public class UploadValidator {
                     ApiErrorCode.EXTENSION_BLOCKED.message(segment), detail, analysis, signature);
         }
 
-        // R5 -- content is executable regardless of what the name claims.
-        if (signature != null && signature.isExecutableOrScript()) {
-            String detail = "파일명은 '%s'이지만 실제 내용의 시그니처가 %s로 확인되었습니다."
-                    .formatted(analysis.displayFilename(), signature.id());
+        Optional<String> extension = analysis.effectiveExtension();
+
+        // R5 -- executable content the name does not own up to.
+        //
+        // Reaching here means R4 allowed the extension, so an honestly named
+        // executable is one the administrator has chosen to permit. Only disguise
+        // is rejected.
+        if (signature != null && signature.isExecutableOrScript()
+                && !declaresItsOwnContent(extension, signature)) {
+            String detail;
+            if (ContentSignatureDetector.AMBIGUOUS_CAFEBABE.equals(signature.id())) {
+                // Explain the inability rather than implying the name was wrong:
+                // here the content itself cannot be pinned down.
+                detail = "파일 내용이 Java class와 Mach-O fat 바이너리 중 어느 것인지 확정할 수 없어, "
+                        + "파일명 '%s'이 내용을 올바르게 선언하는지 검증할 수 없습니다."
+                                .formatted(analysis.displayFilename());
+            } else if (extension.isEmpty()) {
+                detail = "확장자가 없는 파일의 내용이 %s로 확인되었습니다. 확장자가 없으면 차단 정책을 적용할 수 없어 거부합니다."
+                        .formatted(signature.id());
+            } else {
+                detail = "파일명은 '%s'이지만 실제 내용의 시그니처가 %s로, '%s' 확장자와 일치하지 않습니다."
+                        .formatted(analysis.displayFilename(), signature.id(), extension.get());
+            }
             return UploadVerdict.reject(ApiErrorCode.EXECUTABLE_CONTENT,
                     ApiErrorCode.EXECUTABLE_CONTENT.message(), detail, analysis, signature);
         }
 
         // R5b -- polyglot: an "image" carrying server-side script markers.
-        Optional<String> extension = analysis.effectiveExtension();
         if (extension.isPresent()
                 && IMAGE_LIKE.contains(extension.get())
                 && signatureDetector.containsScriptMarkers(candidate.header())) {
@@ -151,6 +236,17 @@ public class UploadValidator {
         logDeclaredTypeMismatch(candidate, signature);
 
         return UploadVerdict.accept(analysis, signature);
+    }
+
+    /**
+     * @return true when the extension is one that legitimately carries this
+     *         signature, so the file is named honestly rather than disguised.
+     *         A file with no extension declares nothing and never qualifies.
+     */
+    private static boolean declaresItsOwnContent(Optional<String> extension, FileSignature signature) {
+        return extension
+                .map(value -> DECLARING_EXTENSIONS.getOrDefault(signature.id(), Set.of()).contains(value))
+                .orElse(false);
     }
 
     private Optional<String> firstBlockedSegment(FilenameAnalysis analysis, Set<String> blockedExtensions) {

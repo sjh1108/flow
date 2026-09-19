@@ -171,16 +171,18 @@ cd deploy && cp .env.example .env && docker compose up -d
 ## 4. 검증 절차
 
 ```bash
-# 1) 백엔드 테스트 131건
+# 1) 백엔드 단위·통합 테스트
 cd backend && ./gradlew test
 
-# 2) API 엔드투엔드 35건
+# 2) API 엔드투엔드
 scripts/verify.sh http://localhost:8080
 
-# 3) 브라우저 검증 19건 (Chromium 필요)
+# 3) 브라우저 검증 (Chromium 필요)
 npm install playwright
 node scripts/ui-verify.mjs      # FRONTEND/API 환경변수로 주소 지정 가능
 ```
+
+각 계층의 검증 건수는 [`00-requirements-traceability.md`](00-requirements-traceability.md)의 「검증 총계」를 참고하세요. 숫자를 여러 문서에 복사하면 어긋나므로 그 표 한 곳에서만 관리합니다.
 
 ---
 
