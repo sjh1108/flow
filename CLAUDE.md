@@ -1,6 +1,6 @@
 ## Workflow Orchestration
 
-### 1. Plan Node Default
+### 1. Plan Mode Default
 - Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
 - If something goes sideways, STOP and re-plan immediately - don't keep pushing
 - Use plan mode for verification steps, not just building
@@ -49,7 +49,7 @@
 
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.
 - **No Laziness**: Find root causes. No temporary fixes. Senior developer standards.
-- **Minimat Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
+- **Minimal Impact**: Changes should only touch what's necessary. Avoid introducing bugs.
 
 ## 작업 규칙
 
