@@ -16,6 +16,13 @@ import org.springframework.stereotype.Component;
  *
  * <p>Only the first {@link #HEADER_BYTES} bytes are ever examined, so this stays
  * cheap and never pulls a whole upload into memory.
+ *
+ * <p><strong>This matches magic numbers; it does not validate file structure.</strong>
+ * A file reported as {@code PE_EXE} starts with the bytes {@code MZ} -- it has not
+ * been parsed, and its headers, sections and entry point are never checked. That is
+ * the right trade for this purpose (the question is "what is this pretending to
+ * be?", not "is this a well-formed binary?"), but it means a report of {@code PE_EXE}
+ * must not be read as "this is a valid Windows executable".
  */
 @Component
 public class ContentSignatureDetector {
@@ -29,7 +36,9 @@ public class ContentSignatureDetector {
             // --- executables -----------------------------------------------------
             magic("PE_EXE", SignatureFamily.EXECUTABLE, 0, 0x4D, 0x5A),                   // "MZ": .exe/.dll/.scr
             magic("ELF", SignatureFamily.EXECUTABLE, 0, 0x7F, 0x45, 0x4C, 0x46),          // Linux binary
-            magic("JAVA_CLASS", SignatureFamily.EXECUTABLE, 0, 0xCA, 0xFE, 0xBA, 0xBE),   // also Mach-O fat
+            // 0xCAFEBABE is shared by Java class files and Mach-O fat binaries;
+            // resolveCafebabe() below separates them. Never reported under this id.
+            magic("CAFEBABE", SignatureFamily.EXECUTABLE, 0, 0xCA, 0xFE, 0xBA, 0xBE),
             magic("MACH_O_32", SignatureFamily.EXECUTABLE, 0, 0xFE, 0xED, 0xFA, 0xCE),
             magic("MACH_O_64", SignatureFamily.EXECUTABLE, 0, 0xFE, 0xED, 0xFA, 0xCF),
             magic("MACH_O_LE32", SignatureFamily.EXECUTABLE, 0, 0xCE, 0xFA, 0xED, 0xFE),
@@ -61,16 +70,63 @@ public class ContentSignatureDetector {
         return new Magic(id, family, offset, bytes);
     }
 
+    /**
+     * Reported when 0xCAFEBABE cannot be resolved to one specific format.
+     *
+     * <p>Callers must not treat an ambiguous signature as evidence that a filename
+     * matches its content -- an unresolved signature proves nothing either way.
+     */
+    public static final String AMBIGUOUS_CAFEBABE = "CAFEBABE_AMBIGUOUS";
+
+    /** Lowest Java class file major_version in existence (45 = Java 1.1). */
+    private static final int MIN_JAVA_MAJOR_VERSION = 45;
+
     public Optional<FileSignature> detect(byte[] header) {
         if (header == null || header.length == 0) {
             return Optional.empty();
         }
         for (Magic candidate : MAGICS) {
             if (matches(header, candidate)) {
-                return Optional.of(new FileSignature(candidate.id(), candidate.family()));
+                String id = "CAFEBABE".equals(candidate.id())
+                        ? resolveCafebabe(header)
+                        : candidate.id();
+                return Optional.of(new FileSignature(id, candidate.family()));
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Separates a Java class file from a Mach-O fat binary, which share the
+     * 0xCAFEBABE magic number.
+     *
+     * <p>The two formats lay out bytes 4-7 differently and the ranges do not
+     * overlap in practice:
+     *
+     * <pre>
+     *   Java class     bytes 4-5 = minor_version, bytes 6-7 = major_version (>= 45)
+     *   Mach-O fat     bytes 4-7 = nfat_arch, a big-endian count (typically 2-6)
+     * </pre>
+     *
+     * <p>No Java class file carries a major version below 45, and no fat binary
+     * bundles 45 architectures, so the boundary is unambiguous for real files.
+     * Anything that fits neither shape is reported as ambiguous rather than
+     * guessed at.
+     */
+    private static String resolveCafebabe(byte[] header) {
+        if (header.length < 8) {
+            return AMBIGUOUS_CAFEBABE;
+        }
+        int high = ((header[4] & 0xFF) << 8) | (header[5] & 0xFF);
+        int low = ((header[6] & 0xFF) << 8) | (header[7] & 0xFF);
+
+        if (low >= MIN_JAVA_MAJOR_VERSION) {
+            return "JAVA_CLASS";
+        }
+        if (high == 0 && low >= 1) {
+            return "MACH_O_FAT";
+        }
+        return AMBIGUOUS_CAFEBABE;
     }
 
     /**

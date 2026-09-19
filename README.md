@@ -48,8 +48,8 @@ http://localhost:8081 을 엽니다.
 ## 검증
 
 ```bash
-cd backend && ./gradlew test        # 131건
-scripts/verify.sh                   # 37건 (실행 중인 API 대상)
+cd backend && ./gradlew test        # 158건
+scripts/verify.sh                   # 38건 (실행 중인 API 대상)
 node scripts/ui-verify.mjs          # 19건 (npm install playwright 필요)
 ```
 
@@ -76,7 +76,7 @@ scripts/     verify.sh (API) · ui-verify.mjs (브라우저)
 | `evil.exe.` (후행 점) | 차단 — Windows가 점을 지우기 전에 먼저 제거 |
 | `report.jpg` (내용은 PE 바이너리) | `EXECUTABLE_CONTENT` — 매직 넘버로 위장 탐지 |
 | `payload` (확장자 없는 PE 바이너리) | `EXECUTABLE_CONTENT` — 확장자가 없으면 정책이 손댈 수 없음 |
-| `setup.exe` (진짜 PE, exe 미체크) | **허용** — 정직하게 이름 붙은 파일은 확장자 정책이 판단 |
+| `setup.exe` (PE 시그니처, exe 미체크) | **허용** — 정직하게 이름 붙은 파일은 확장자 정책이 판단 |
 | `avatar.png` (내용에 `<?php`) | `EXECUTABLE_CONTENT` — 폴리글롯 웹셸 |
 | `../../etc/passwd` | 경로 성분 제거. 저장 경로에 사용자 입력이 아예 들어가지 않음 |
 | `CON.txt` | `FILENAME_RESERVED` |

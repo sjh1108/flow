@@ -80,7 +80,7 @@ API 표면에서도 **고정 확장자 삭제 엔드포인트를 만들지 않�
 
 **왜 검증에서 걸러지지 않았나 — 이 건의 진짜 교훈**
 
-통합 테스트·`verify.sh`·브라우저 테스트의 **모든 `hello.exe` 픽스처가 텍스트 내용**(`"hello, world"`)이었습니다. 진짜 PE 바이트를 한 번도 쓰지 않아서, 137 + 35 + 19건이 전부 통과하면서도 핵심 기능의 고장을 놓쳤습니다.
+통합 테스트·`verify.sh`·브라우저 테스트의 **모든 `hello.exe` 픽스처가 텍스트 내용**(`"hello, world"`)이었습니다. PE 시그니처(MZ) 바이트를 한 번도 쓰지 않아서, 137 + 35 + 19건이 전부 통과하면서도 핵심 기능의 고장을 놓쳤습니다.
 
 테스트가 많다는 것과 올바른 것을 검증한다는 것은 다릅니다. **픽스처가 규칙을 우회하면 그 규칙은 검증되지 않습니다.**
 
@@ -93,22 +93,57 @@ API 표면에서도 **고정 확장자 삭제 엔드포인트를 만들지 않�
   └ 그 외                           → 거부 (위장)
 ```
 
-시그니처 id별로 "정직한 확장자" 집합을 둡니다(`PE_EXE` → exe, dll, scr, com, sys, msi…; `SHEBANG` → sh, bash, py, pl, rb…). 정직하게 이름 붙은 실행 파일은 확장자 정책의 판단에 맡기고, R5는 이름이 내용을 숨길 때만 작동합니다.
+시그니처 id별로 "정직한 확장자" 집합을 둡니다(`PE_EXE` → exe, dll, scr, com, sys…; `SHEBANG` → sh, bash, py, js…). 정직하게 이름 붙은 실행 파일은 확장자 정책의 판단에 맡기고, R5는 이름이 내용을 숨길 때만 작동합니다.
+
+**이 매핑 자체가 2차 리뷰에서 다시 지적을 받았고, 세 가지 오류가 나왔습니다.**
+
+| 지적 | 문제 | 조치 |
+|---|---|---|
+| "`js`가 왜 없나 — exe와 같은 오류 아닌가" | `SHEBANG` 집합에 `js`가 없어 node shebang이 붙은 `.js`가 `js` 미체크 상태에서도 거부됨. **고정 확장자 7개 중 하나에서 방금 고친 것과 동일한 버그**가 남아 있었음 | `js`, `mjs`, `cjs` 추가 |
+| "`.msi`는 PE 형식이 아닌데 왜 `PE_EXE`에 있나" | MSI는 OLE 복합 문서(`D0CF11E0A1B11AE1`). PE 내용 + `evil.msi` + msi 미차단 → "정직" 오판 → 통과 | `msi` 제거 |
+| (전수 감사에서 추가 발견) | `bin`이 `ELF` 집합에 있었음. `.bin`은 범용 확장자라 "ELF임"을 선언하지 않는데도 `payload.bin` 리눅스 실행파일이 통과 | `bin` 제거 |
+
+여기서 얻은 규칙: **어떤 확장자가 이 표에 들어가려면 그 시그니처가 실제로 그 확장자의 형식이어야 합니다.** "실행 파일 계열이니까"로 묶으면 안 됩니다.
+
+**모호한 시그니처 — CAFEBABE**
+
+`0xCAFEBABE`는 Java class와 Mach-O fat 바이너리가 공유합니다. 처음에는 두 확장자를 모두 허용 목록에 넣어 넘어갔는데, 리뷰에서 **"시그니처가 모호한데 허용 확장자만 넓혀서 해결하면 R5의 의미가 모호해진다"**는 지적을 받았습니다. 맞는 지적이고, 실제로 `Java class 내용 + malicious.dylib → ACCEPTED` 경로가 성립했습니다.
+
+두 형식의 4~7바이트가 구조적으로 겹치지 않으므로 구분합니다.
+
+| | 바이트 4-5 | 바이트 6-7 |
+|---|---|---|
+| Java class | `minor_version` | `major_version` — **45 이상** (45 = Java 1.1) |
+| Mach-O fat | `nfat_arch` 상위 (사실상 0) | `nfat_arch` 하위 — 보통 2~6 |
+
+Java major는 45부터 시작하고 45개 아키텍처를 묶은 fat 바이너리는 없으므로 경계가 명확합니다. 구분되지 않는 입력은 `CAFEBABE_AMBIGUOUS`로 보고하고 **선언 매핑에 넣지 않습니다.**
+
+이로써 불변식 하나를 명문화했습니다 — **모호한 시그니처는 정직 판정의 근거가 될 수 없다.** 모호성을 확장자 목록 확대로 덮지 않습니다.
+
+> 구분 대신 "모호하면 전부 거부"를 택하지 않은 이유: 그러면 진짜 `.class` 파일이 `class` 미차단 상태에서도 거부되어, 이 절에서 고친 exe 버그와 **정확히 같은 형태**의 문제가 다시 생깁니다.
 
 확장자가 없는 실행 파일을 계속 거부하는 이유가 중요합니다 — 확장자가 없으면 확장자 정책이 손댈 대상이 없어, 허용하면 `payload`(무확장자 PE)가 정책을 통째로 우회합니다.
 
 **이를 고정하는 테스트**
 
-모든 exe 픽스처를 **진짜 PE 바이트**로 교체하고, 다음을 추가했습니다.
+모든 exe 픽스처를 **PE 시그니처(MZ) 바이트**로 교체하고, 다음을 추가했습니다.
 
 | 입력 | 정책 | 기대 |
 |---|---|---|
-| 진짜 PE + `setup.exe` | exe 미체크 | **ACCEPTED** ← 지금까지 없던 케이스 |
-| 진짜 PE + `setup.exe` | exe 체크 | `EXTENSION_BLOCKED` |
-| 진짜 PE + `report.jpg` | — | `EXECUTABLE_CONTENT` (위장) |
-| 진짜 PE + `payload` (무확장자) | — | `EXECUTABLE_CONTENT` |
+| PE 시그니처 + `setup.exe` | exe 미체크 | **ACCEPTED** ← 지금까지 없던 케이스 |
+| PE 시그니처 + `setup.exe` | exe 체크 | `EXTENSION_BLOCKED` |
+| PE 시그니처 + `report.jpg` | — | `EXECUTABLE_CONTENT` (위장) |
+| PE 시그니처 + `payload` (무확장자) | — | `EXECUTABLE_CONTENT` |
 | ELF 내용 + `setup.exe` | — | `EXECUTABLE_CONTENT` (실행파일 확장자라도 종류가 다르면 위장) |
 | shebang + `deploy.sh` | sh 미등록 / 등록 | ACCEPTED / `EXTENSION_BLOCKED` |
+| PE 시그니처 + `installer.msi` | — | `EXECUTABLE_CONTENT` (MSI는 PE가 아님) |
+| ELF 내용 + `payload.bin` | — | `EXECUTABLE_CONTENT` (`.bin`은 선언이 아님) |
+| node shebang + `build.js` | js 미체크 / 체크 | ACCEPTED / `EXTENSION_BLOCKED` |
+| Java class + `Foo.class` / `malicious.dylib` | — | ACCEPTED / `EXECUTABLE_CONTENT` |
+| Mach-O fat + `lib.dylib` / `Foo.class` | — | ACCEPTED / `EXECUTABLE_CONTENT` |
+| 구분 불가 CAFEBABE + `.class` 또는 `.dylib` | — | 둘 다 `EXECUTABLE_CONTENT` |
+
+> **탐지기의 한계.** `ContentSignatureDetector`는 **매직 넘버만 대조하며 파일 구조를 검증하지 않습니다.** `PE_EXE`로 보고된 파일은 `MZ`로 시작한다는 뜻일 뿐, 유효한 Windows 실행 파일이라는 보증이 아닙니다. 테스트 픽스처도 같은 이유로 매직 넘버 접두사이며, "진짜 PE 파일"이 아닙니다(2차 리뷰에서 표기가 과장이라는 지적을 받아 정정).
 
 > **남은 한계.** 고정 확장자의 기본값이 전부 unCheck이므로, 기본 상태에서는 정직하게 이름 붙은 실행 파일이 업로드됩니다. 이는 요구사항이 명시한 "default는 unCheck 상태"를 그대로 따른 결과입니다. 실행 파일을 항상 막아야 하는 환경이라면 배포 시 고정 확장자를 체크한 상태로 시작하는 것이 맞습니다.
 

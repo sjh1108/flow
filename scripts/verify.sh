@@ -87,12 +87,14 @@ delete_custom() {
 }
 
 # ---------------------------------------------------------------- fixtures
-# hello.exe carries REAL PE bytes, not text. An earlier version of this script
-# used text content, so the core scenario below passed while the exe checkbox
-# actually had no effect on genuine executables.
+# hello.exe carries the PE magic number (MZ), not text. These are magic-number
+# prefixes rather than valid executables -- the detector matches leading bytes
+# only, so a prefix is what exercises it. An earlier version used text content,
+# so the core scenario below passed while the exe checkbox had no effect at all.
 printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/hello.exe"
 printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/payload"
 printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/report.jpg"
+printf 'MZ\x90\x00\x03\x00\x00\x00'     > "$WORK_DIR/installer.msi"
 printf 'hello, world\n'                 > "$WORK_DIR/notes.txt"
 printf 'hello, world\n'                 > "$WORK_DIR/invoice.pdf.exe"
 printf '#!/bin/bash\necho hi\n'         > "$WORK_DIR/deploy.sh"
@@ -125,7 +127,7 @@ echo; bold "2. [CORE] 정책이 실제 업로드에 강제되는지"; echo
 
 set_fixed exe false > /dev/null
 result=$(upload hello.exe)
-check "exe 미체크 상태에서 진짜 PE 실행파일 업로드 성공" "200" "$(status_of "$result")"
+check "exe 미체크 상태에서 PE 시그니처 파일 업로드 성공" "200" "$(status_of "$result")"
 contains "결과가 ACCEPTED" '"status":"ACCEPTED"' "$(body_of "$result")"
 
 code=$(set_fixed exe true)
@@ -155,6 +157,10 @@ contains "탐지된 시그니처가 PE_EXE" 'PE_EXE' "$(body_of "$result")"
 result=$(upload payload)
 check "확장자 없는 실행파일 거부" "422" "$(status_of "$result")"
 contains "사유가 확장자 부재를 설명" '확장자가 없' "$(body_of "$result")"
+
+# MSI is an OLE compound document, not PE. A PE payload named .msi is a disguise.
+result=$(upload installer.msi)
+check "PE 내용을 .msi로 위장한 파일 거부" "422" "$(status_of "$result")"
 
 result=$(upload avatar.png)
 check "실제 PNG는 정상 업로드" "200" "$(status_of "$result")"

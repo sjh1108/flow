@@ -171,10 +171,10 @@ cd deploy && cp .env.example .env && docker compose up -d
 ## 4. 검증 절차
 
 ```bash
-# 1) 백엔드 테스트 131건
+# 1) 백엔드 테스트 158건
 cd backend && ./gradlew test
 
-# 2) API 엔드투엔드 35건
+# 2) API 엔드투엔드 38건
 scripts/verify.sh http://localhost:8080
 
 # 3) 브라우저 검증 19건 (Chromium 필요)

@@ -22,9 +22,24 @@ class UploadValidatorTest {
             new ContentSignatureDetector());
 
     private static final byte[] TEXT = "hello, world".getBytes(StandardCharsets.UTF_8);
+
+    // These are magic-number prefixes, not valid files of their formats. The
+    // detector matches leading bytes only, so a prefix is all these tests need --
+    // but they should not be described as real executables.
     private static final byte[] PE_HEADER = new byte[]{0x4D, 0x5A, (byte) 0x90, 0x00};
+    private static final byte[] ELF_HEADER = new byte[]{0x7F, 0x45, 0x4C, 0x46, 0x02};
     private static final byte[] PNG_HEADER =
             new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+    private static final byte[] NODE_SHEBANG =
+            "#!/usr/bin/env node\nconsole.log(1)\n".getBytes(StandardCharsets.UTF_8);
+
+    /** 0xCAFEBABE + minor 0 + major 52 (Java 8) -- reads as a class file. */
+    private static final byte[] JAVA_CLASS_HEADER = new byte[]{
+            (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x34};
+
+    /** 0xCAFEBABE + nfat_arch 2 -- reads as a Mach-O fat binary. */
+    private static final byte[] MACH_O_FAT_HEADER = new byte[]{
+            (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE, 0x00, 0x00, 0x00, 0x02};
 
     private UploadCandidate candidate(String filename, byte[] header) {
         return new UploadCandidate(filename, header.length, "application/octet-stream", header);
@@ -154,7 +169,7 @@ class UploadValidatorTest {
 
     /**
      * The case the original rule got wrong, and that no test covered because every
-     * ".exe" fixture held text rather than real PE bytes.
+     * ".exe" fixture held text rather than the PE magic number.
      *
      * <p>A genuine executable named .exe is not in disguise. With the exe checkbox
      * unchecked the administrator has allowed it, and the upload must honour that
@@ -217,11 +232,108 @@ class UploadValidatorTest {
     @DisplayName("an unrelated executable extension does not count as honest")
     void rejectsExecutableUnderAMismatchedExecutableExtension() {
         // ELF content under a Windows executable extension is still a disguise.
-        byte[] elf = new byte[]{0x7F, 0x45, 0x4C, 0x46, 0x02};
-        var verdict = validator.validate(candidate("setup.exe", elf), Set.of());
+        var verdict = validator.validate(candidate("setup.exe", ELF_HEADER), Set.of());
 
         assertThat(verdict.rejected()).isTrue();
         assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * An MSI is an OLE compound document, not a PE. Listing {@code msi} as a PE
+     * extension let a PE binary named {@code installer.msi} read as honestly named
+     * and be accepted whenever {@code msi} was not explicitly blocked.
+     */
+    @Test
+    @DisplayName("rejects a PE binary disguised as an .msi installer")
+    void rejectsPeExecutableDisguisedAsMsi() {
+        var verdict = validator.validate(candidate("installer.msi", PE_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * {@code .bin} is a generic container extension. It declares nothing about the
+     * format inside, so it cannot serve as an honest declaration of an ELF binary.
+     */
+    @Test
+    @DisplayName("rejects an ELF binary under the generic .bin extension")
+    void rejectsElfDisguisedAsGenericBin() {
+        var verdict = validator.validate(candidate("payload.bin", ELF_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    // --- js is a fixed extension, so its checkbox has to govern -------------
+
+    @Test
+    @DisplayName("accepts a shebang .js file when js is unblocked")
+    void acceptsJavaScriptWithShebangWhenJsUnblocked() {
+        var verdict = validator.validate(candidate("build.js", NODE_SHEBANG), Set.of());
+
+        assertThat(verdict.accepted())
+                .as("js is one of the seven fixed extensions; unchecking it must allow the file")
+                .isTrue();
+    }
+
+    @Test
+    void blocksJavaScriptWithShebangWhenJsChecked() {
+        var verdict = validator.validate(candidate("build.js", NODE_SHEBANG), Set.of("js"));
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXTENSION_BLOCKED);
+    }
+
+    // --- 0xCAFEBABE is shared by two formats --------------------------------
+
+    @Test
+    @DisplayName("accepts a Java class file named .class")
+    void acceptsJavaClassNamedClass() {
+        assertThat(validator.validate(candidate("Foo.class", JAVA_CLASS_HEADER), Set.of()).accepted())
+                .isTrue();
+    }
+
+    /** Both formats share 0xCAFEBABE; resolving which one it is prevents this. */
+    @Test
+    @DisplayName("rejects Java class content wearing a .dylib name")
+    void rejectsJavaClassDisguisedAsDylib() {
+        var verdict = validator.validate(candidate("malicious.dylib", JAVA_CLASS_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    @Test
+    @DisplayName("accepts a Mach-O fat binary named .dylib")
+    void acceptsMachOFatNamedDylib() {
+        assertThat(validator.validate(candidate("lib.dylib", MACH_O_FAT_HEADER), Set.of()).accepted())
+                .isTrue();
+    }
+
+    @Test
+    void rejectsMachOFatDisguisedAsClass() {
+        var verdict = validator.validate(candidate("Foo.class", MACH_O_FAT_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
+    /**
+     * When the format cannot be resolved, neither extension may be treated as an
+     * honest declaration -- an unresolved signature is evidence of nothing.
+     */
+    @Test
+    @DisplayName("rejects an unresolvable CAFEBABE under either extension")
+    void rejectsAmbiguousCafebabeForBothExtensions() {
+        byte[] ambiguous = new byte[]{
+                (byte) 0xCA, (byte) 0xFE, (byte) 0xBA, (byte) 0xBE,
+                (byte) 0xFF, (byte) 0xFF, 0x00, 0x00};
+
+        assertThat(validator.validate(candidate("Foo.class", ambiguous), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+        assertThat(validator.validate(candidate("lib.dylib", ambiguous), Set.of()).code())
+                .isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
     }
 
     @Test

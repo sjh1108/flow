@@ -118,9 +118,10 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
 
     /**
      * The checkbox has to govern genuine executables, not just files that happen
-     * to be named .exe. Every exe fixture here carries real PE bytes for exactly
-     * that reason -- an earlier version of these tests used text content and so
-     * passed while the checkbox did nothing.
+     * to be named .exe. Every exe fixture here carries the PE magic number for
+     * exactly that reason -- an earlier version used text content and so passed
+     * while the checkbox did nothing. (These are magic-number prefixes, not valid
+     * executables; the detector inspects leading bytes only.)
      */
     @Test
     @DisplayName("a real executable with no extension is refused whatever the policy says")

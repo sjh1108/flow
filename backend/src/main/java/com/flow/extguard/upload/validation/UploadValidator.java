@@ -74,18 +74,38 @@ public class UploadValidator {
      * it is, so whether it may be uploaded is the extension policy's decision
      * rather than this rule's. Anything else carrying executable content is
      * hiding, and R5 rejects it.
+     *
+     * <p>Two rules keep this table honest, both learned from review findings:
+     *
+     * <ul>
+     *   <li><strong>An extension belongs here only if that signature really is its
+     *       format.</strong> {@code msi} was listed under {@code PE_EXE} at one
+     *       point, but an MSI is an OLE compound document, not a PE -- which made
+     *       a PE binary named {@code evil.msi} read as honest. Likewise {@code bin}
+     *       under {@code ELF}: it is a generic container extension that declares
+     *       nothing, so an ELF named {@code payload.bin} was slipping through.
+     *   <li><strong>An ambiguous signature is never grounds for honesty.</strong>
+     *       Listing every extension a signature <em>might</em> belong to would
+     *       dissolve the meaning of this rule. Signatures the detector cannot pin
+     *       down (see {@link ContentSignatureDetector#AMBIGUOUS_CAFEBABE}) are
+     *       absent from this map, so they never match and are rejected.
+     * </ul>
      */
     private static final Map<String, Set<String>> DECLARING_EXTENSIONS = Map.of(
-            "PE_EXE", Set.of("exe", "dll", "scr", "com", "sys", "msi", "ocx", "cpl", "drv", "efi"),
-            "ELF", Set.of("so", "o", "elf", "bin", "out", "ko"),
+            "PE_EXE", Set.of("exe", "dll", "scr", "com", "sys", "ocx", "cpl", "drv", "efi"),
+            "ELF", Set.of("so", "o", "elf", "out", "ko"),
             "MACH_O_32", Set.of("dylib", "bundle", "o"),
             "MACH_O_64", Set.of("dylib", "bundle", "o"),
             "MACH_O_LE32", Set.of("dylib", "bundle", "o"),
             "MACH_O_LE64", Set.of("dylib", "bundle", "o"),
-            // CAFEBABE is both a Java class file and a Mach-O fat binary.
-            "JAVA_CLASS", Set.of("class", "dylib"),
-            "SHEBANG", Set.of("sh", "bash", "zsh", "ksh", "csh", "py", "pl", "rb", "php",
-                    "lua", "awk", "cgi"));
+            "MACH_O_FAT", Set.of("dylib", "bundle"),
+            "JAVA_CLASS", Set.of("class"),
+            // js/mjs/cjs matter here: js is one of the seven fixed extensions, so
+            // omitting it left its checkbox unable to govern a shebang-carrying
+            // .js file -- the same defect this rule was introduced to remove.
+            "SHEBANG", Set.of("sh", "bash", "zsh", "ksh", "csh", "fish", "tcl",
+                    "py", "pl", "rb", "php", "lua", "awk", "cgi",
+                    "js", "mjs", "cjs"));
 
     private final PolicyProperties policyProperties;
     private final StorageProperties storageProperties;

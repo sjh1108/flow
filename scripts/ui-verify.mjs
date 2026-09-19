@@ -30,8 +30,9 @@ const fixture = (name, content) => {
   fs.writeFileSync(file, content);
   return file;
 };
-// Real PE bytes, not text: the exe checkbox has to govern genuine executables,
-// and an earlier version of this script used text content so it never did.
+// The PE magic number (MZ), not text. This is a magic-number prefix rather than
+// a valid executable -- the detector matches leading bytes only. An earlier
+// version used text content, so the exe checkbox was never actually exercised.
 const HELLO_EXE = fixture('hello.exe', Buffer.from([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]));
 const NOTES_TXT = fixture('notes.txt', 'hello world');
 
@@ -115,7 +116,7 @@ check('고정 확장자 입력 시 안내', (await page.textContent('#custom-inp
 console.log('\n3. [CORE] 정책이 실제 업로드에 강제되는지');
 await page.setInputFiles('#file-input', HELLO_EXE);
 await page.waitForSelector('.result.is-accepted', { timeout: 15000 });
-check('exe 미체크 상태에서 진짜 PE 실행파일 업로드 성공', true);
+check('exe 미체크 상태에서 PE 시그니처 파일 업로드 성공', true);
 
 await page.click('.chip:has(.chip-label:text-is("exe")) input');
 await page.waitForSelector('.chip.is-blocked', { timeout: 10000 });
