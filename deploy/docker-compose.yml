@@ -19,6 +19,10 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
       MYSQL_DATABASE: extguard
+      # Read by mysql-init/01-users.sh when it creates the two accounts. Keeping
+      # them here rather than in the SQL means no password is ever committed.
+      MIGRATOR_PASSWORD: ${MIGRATOR_PASSWORD:?set MIGRATOR_PASSWORD in .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_0900_ai_ci
@@ -26,7 +30,10 @@ services:
       - mysql-data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      # No password: `mysqladmin ping` succeeds whenever the server answers the
+      # handshake, access denied included, so the credential adds nothing here
+      # and would only put the root password in the container's argv.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -36,20 +43,83 @@ services:
         limits:
           memory: 512M
 
+  # Stage 1 of 3: bring the schema up to date, then exit.
+  #
+  # This is the same image as `app`, run under the `migrate` profile so it
+  # migrates instead of serving. Same image on purpose: the Flyway version is
+  # then the one the application was built against, the migrations travel inside
+  # the jar, and it is built on this machine so the architecture matches (see
+  # the ARM64 note in backend/Dockerfile).
+  #
+  # It exists so the application container does not have to. Flyway used to run
+  # inside the app with SPRING_FLYWAY_USER/PASSWORD set to the migrator, which
+  # meant the app held credentials for an account with ALL PRIVILEGES -- anything
+  # able to read its environment could undo every restriction in grants.sql.
+  migrate:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: migrate
+      # The migrator is this container's only account. Flyway uses the ordinary
+      # datasource, so it needs no credentials of its own.
+      DB_URL: jdbc:mysql://mysql:3306/extguard?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8
+      DB_USERNAME: extguard_migrator
+      DB_PASSWORD: ${MIGRATOR_PASSWORD:?set MIGRATOR_PASSWORD in .env}
+      JAVA_OPTS: -XX:MaxRAMPercentage=75 -XX:+UseSerialGC
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  # Stage 2 of 3: narrow the application account, then exit.
+  #
+  # Table-level grants need the tables, so this cannot run with the database's
+  # init scripts -- it waits for `migrate`. It used to be a manual command the
+  # README admitted was easy to forget; forgetting it left the application
+  # account with database-wide rights and nothing said so.
+  #
+  # Re-applied on every deployment, which is the point: the grants are asserted
+  # rather than assumed.
+  grants:
+    image: mysql:8.4
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # MYSQL_PWD only to keep the password out of this container's argv, where
+      # any process in it could read the command line. It is not the more secure
+      # option in general -- MySQL's own documentation calls MYSQL_PWD insecure,
+      # since the environment is readable too. Doing better means a Docker
+      # secret or a client config file, which is more machinery than a one-shot
+      # on a single-instance deployment needs.
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - ./grants.sql:/grants.sql:ro
+    command: >
+      sh -c 'mysql -h mysql -uroot < /grants.sql'
+
+  # Stage 3 of 3: the application. Holds one account, its own.
   app:
     build:
       context: ../backend
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      mysql:
-        condition: service_healthy
+      grants:
+        condition: service_completed_successfully
     environment:
-      # Flyway connects as the migration account, which owns the schema.
-      SPRING_FLYWAY_USER: extguard_migrator
-      SPRING_FLYWAY_PASSWORD: ${MIGRATOR_PASSWORD:?set MIGRATOR_PASSWORD in .env}
-      # The application connects as a restricted account that cannot insert or
-      # delete rows in fixed_extension_state. See mysql-init/02-grants.sql.
+      # Migration is somebody else's job now. If the schema were somehow behind,
+      # Hibernate's `ddl-auto: validate` refuses to start rather than running on
+      # a shape it does not recognise.
+      SPRING_FLYWAY_ENABLED: "false"
+      # A restricted account that cannot insert or delete rows in
+      # fixed_extension_state. See grants.sql.
       DB_URL: jdbc:mysql://mysql:3306/extguard?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=utf8
       DB_USERNAME: extguard_app
       DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}

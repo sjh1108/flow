@@ -69,7 +69,9 @@ cp .env.example .env
 $EDITOR .env          # 비밀번호, 관리자 토큰, CORS 오리진 입력
 ```
 
-`.env`의 `MIGRATOR_PASSWORD` / `APP_DB_PASSWORD`를 `mysql-init/01-users.sql`의 값과 **일치**시키거나, 01-users.sql 쪽을 편집하세요. 이 파일은 MySQL 최초 기동 시 한 번만 실행됩니다.
+비밀번호는 `.env`에만 있습니다. `mysql-init/01-users.sh`가 환경변수로 읽어 계정을 만들므로 **맞출 대상이 없습니다.** 계정 생성은 데이터 볼륨이 빈 상태에서 한 번만 일어나고, 나중에 바꾸려면 `ALTER USER`를 직접 실행해야 합니다.
+
+셋 다 `openssl rand -hex 32`로 만드세요. 그중 `MIGRATOR_PASSWORD`와 `APP_DB_PASSWORD`는 SQL 리터럴에 보간되므로 **형식(영문·숫자·`_`·`-`)이 강제**되고, 어기면 계정이 만들어지지 않는 대신 스크립트가 먼저 실패합니다. `MYSQL_ROOT_PASSWORD`는 그 경로가 아니라 강제하지 않습니다.
 
 ```bash
 # 관리자 토큰 생성
@@ -80,29 +82,46 @@ openssl rand -base64 32
 docker compose up -d --build            # 기존 리버스 프록시를 쓰는 경우
 docker compose --profile with-tls up -d --build   # Caddy로 TLS까지 처리하는 경우
 
-docker compose logs -f app              # 마이그레이션 적용 확인
 curl localhost:8080/actuator/health
 ```
 
-### 마이그레이션 직후 — 권한 축소 (중요)
+수동 단계는 없습니다. 한 줄이 끝입니다.
 
-테이블이 만들어진 다음에 실행해야 합니다. MySQL은 존재하지 않는 테이블에 권한을 줄 수 없습니다.
+### 3단계로 뜹니다
 
-```bash
-docker compose exec -T mysql \
-  mysql -uroot -p"$MYSQL_ROOT_PASSWORD" < mysql-init/02-grants.sql
+```
+mysql (healthy)
+  └─ migrate   앱 이미지 · migrate 프로파일 · extguard_migrator   → 종료 0
+       └─ grants    mysql:8.4 · root · grants.sql 적용             → 종료 0
+            └─ app      앱 이미지 · extguard_app · Flyway 비활성    → 상시 기동
 ```
 
-이 단계가 **고정 확장자 방어의 마지막 층**입니다. 실행 후 애플리케이션 계정은 `fixed_extension_state`에 `SELECT`와 `UPDATE`만 갖습니다. 애플리케이션이 탈취되어 임의 SQL을 실행하더라도 고정 확장자 행을 지우거나 만들 수 없습니다.
+```bash
+docker compose logs migrate    # 적용된 마이그레이션
+docker compose logs grants     # 권한 축소
+docker compose logs -f app
+```
 
-확인:
+**상시 실행되는 앱은 `extguard_app` 자격증명만 받습니다.** root도 마이그레이터도 갖지 않고, `migrate`는 마이그레이터만 받습니다. 이전에는 앱이 `SPRING_FLYWAY_USER`로 마이그레이터 자격증명을 들고 있었는데, 그 계정은 `ALL PRIVILEGES`라 앱을 장악한 쪽이 환경변수를 읽어 그대로 쓸 수 있었습니다. 계정을 나눠도 한쪽이 다른 쪽 비밀번호를 갖고 있으면 분리가 아닙니다.
+
+`mysql`은 계정을 만들어야 하므로 세 비밀번호를 다 받고 `grants`는 root를 받습니다. 둘 다 부팅에만 관여하고, 공격 표면이 되는 **오래 떠 있는 프로세스는 앱뿐**입니다.
+
+권한 축소도 더는 사람 손에 달려 있지 않습니다. 예전에는 마이그레이션 뒤에 직접 실행하는 단계였고 빠뜨리면 앱 계정이 `extguard.*` 전체 권한을 유지했습니다. 지금은 `grants` 컨테이너가 **매 배포마다** 다시 적용합니다.
+
+### 재부팅 후에는 `docker compose up -d`
+
+`docker start`가 아닙니다. `service_completed_successfully` 조건은 `up` 시점에 평가되므로, 컨테이너를 개별로 start하면 migrate·grants를 건너뛴 채 앱만 뜹니다. 스키마가 이미 맞다면 당장은 돌지만 **권한 재적용이 빠집니다.**
+
+### 확인
 
 ```bash
 docker compose exec mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" \
   -e "SHOW GRANTS FOR 'extguard_app'@'%';"
 ```
 
-`fixed_extension_state`에 `INSERT`나 `DELETE`가 보이면 안 됩니다.
+`fixed_extension_state`에 `INSERT`나 `DELETE`가 보이면 안 되고, `extguard.*`에 대한 권한도 보이면 안 됩니다. 이 권한 설정이 **고정 확장자 방어의 마지막 층**입니다 — 애플리케이션이 탈취되어 임의 SQL을 실행하더라도 고정 확장자 행을 지우거나 만들 수 없습니다.
+
+마이그레이션이 밀린 경우, 앱은 `ddl-auto: validate` 때문에 **기동을 거부합니다.** compose 의존 조건이 1차 방어, 이게 2차입니다. 앱은 Flyway를 돌리지 않으므로 스스로 스키마를 고치지 않습니다.
 
 ### 검증
 
@@ -191,8 +210,9 @@ node scripts/ui-verify.mjs      # FRONTEND/API 환경변수로 주소 지정 가
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `DB_URL` | `jdbc:mysql://localhost:3306/extguard?...` | JDBC URL |
-| `DB_USERNAME` / `DB_PASSWORD` | `extguard` | 런타임 계정 (권한 축소 대상) |
-| `SPRING_FLYWAY_USER` / `SPRING_FLYWAY_PASSWORD` | — | 마이그레이션 계정 |
+| `DB_USERNAME` / `DB_PASSWORD` | `extguard` | 그 컨테이너의 **유일한** DB 계정. `app`은 `extguard_app`, `migrate`는 `extguard_migrator` |
+| `SPRING_PROFILES_ACTIVE` | — | `migrate`면 스키마만 올리고 종료. 앱 컨테이너는 비움 |
+| `SPRING_FLYWAY_ENABLED` | `true` | 앱 컨테이너에서 `false`. 마이그레이션은 `migrate`만 합니다 |
 | `EXTGUARD_ADMIN_TOKEN` | *(빈 값)* | 정책 쓰기 토큰. **비우면 인증이 비활성화되고 시작 시 WARN** |
 | `CORS_ALLOWED_ORIGINS` | `localhost:5173,3000` | 쉼표 구분. Vercel 도메인 필수 |
 | `STORAGE_ROOT` | `/var/lib/extguard/files` | 업로드 저장 루트. 웹 루트 밖이어야 함 |

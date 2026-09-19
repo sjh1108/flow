@@ -85,4 +85,32 @@ class SchemaMigrationTest {
         assertThat(unpurged).isEqualTo(1);
         jdbc().update("DELETE FROM upload_record");
     }
+
+    /**
+     * V4 replaces V3's index so one index serves both scheduled reads: the quota
+     * sum (answered from the index alone) and the retention cursor. V3's index
+     * already confined the range to live rows; what it lacked was created_at,
+     * so the cursor had to test every live candidate against the cutoff and
+     * sort the survivors rather than seek and read in order.
+     *
+     * <p>Column order is the whole point, so the order is what is asserted --
+     * that the index merely exists would pass with the columns any way round.
+     *
+     * <p>This runs against H2. It proves the migration produces the index it
+     * claims to; whether MySQL's optimiser then picks it is a question for
+     * {@code EXPLAIN} on the real database, not for this test.
+     */
+    @Test
+    void liveUsageIndexAlsoOrdersThePurgeCursor() {
+        var columns = jdbc().queryForList(
+                "SELECT column_name FROM information_schema.index_columns "
+                        + "WHERE index_name = 'IDX_UPLOAD_RECORD_LIVE' "
+                        + "ORDER BY ordinal_position", String.class);
+
+        assertThat(columns)
+                .as("id must sit right after created_at: InnoDB appends the primary key "
+                        + "after every declared column, so leaving it implicit would order "
+                        + "ties by size_bytes instead of by id")
+                .containsExactly("STATUS", "PURGED_AT", "CREATED_AT", "ID", "SIZE_BYTES");
+    }
 }

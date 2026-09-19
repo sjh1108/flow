@@ -48,7 +48,7 @@ custom_extension        id PK, extension UNIQUE, created_at
 
 여기에 배포 계층에서 한 겹 더:
 
-| 5 | **DB 권한 분리** (`deploy/mysql-init/02-grants.sql`) | 런타임 계정은 `fixed_extension_state`에 `SELECT, UPDATE`만 보유. `INSERT`/`DELETE` 없음. 애플리케이션이 탈취되어 임의 SQL을 실행하더라도 고정 행을 지우거나 만들 수 없음 |
+| 5 | **DB 권한 분리** (`deploy/grants.sql`) | 런타임 계정은 `fixed_extension_state`에 `SELECT, UPDATE`만 보유. `INSERT`/`DELETE` 없음. 애플리케이션이 탈취되어 임의 SQL을 실행하더라도 고정 행을 지우거나 만들 수 없음. 그 계정이 **더 강한 계정으로 갈아탈 수 없어야** 성립하는 주장이라, 마이그레이션은 별도 컨테이너로 분리했습니다 — 4-4 참고 |
 
 API 표면에서도 **고정 확장자 삭제 엔드포인트를 만들지 않았습니다.** 토글(`PATCH`)만 존재합니다.
 
@@ -573,7 +573,142 @@ GRANT UPDATE (purged_at) ON extguard.upload_record TO 'extguard_app'@'%';
 
 삭제 실패 건에는 부수 효과가 하나 있었습니다. 성공한 것만 표시하도록 바꾸면 **페이지 전체가 실패할 때 같은 페이지를 무한히 다시 읽습니다.** 한 건도 표시하지 못한 회차는 루프를 끝내고 다음 실행에 맡기도록 했고, `doesNotLoopWhenEveryDeleteFails`로 고정했습니다.
 
-#### 4-4. 향후 확장
+#### 4-4. DB 권한 분리 실효화 — 계정을 나눈 것과 분리한 것은 다릅니다
+
+이 프로젝트는 처음부터 계정을 둘 뒀습니다. `extguard_migrator`는 스키마를 소유하고,
+`extguard_app`은 `grants.sql`로 테이블 단위까지 좁혀집니다. 문서도 그렇게 설명했습니다.
+
+**그런데 그 분리는 실효가 없었습니다.**
+
+```yaml
+app:
+  environment:
+    SPRING_FLYWAY_USER: extguard_migrator
+    SPRING_FLYWAY_PASSWORD: ${MIGRATOR_PASSWORD}   # 앱이 들고 있다
+    DB_USERNAME: extguard_app
+```
+
+Flyway를 앱 안에서 돌렸기 때문에 앱 컨테이너가 마이그레이터 자격증명을 환경변수로
+갖고 있었습니다. 그 계정은 `ALL PRIVILEGES`입니다. **앱을 장악한 쪽은 자기 환경변수를
+읽어 그 계정으로 붙으면 그만**이고, `grants.sql`의 제약은 전부 우회됩니다.
+
+그런데 `grants.sql`이 스스로 내세우는 위협 모델이 **정확히 그 경우**였습니다 —
+"애플리케이션이 탈취되어 임의 SQL을 실행하는 경우". 막겠다고 적은 상황에서 작동하지
+않는 방어였습니다. 좁은 계정을 주는 것만으로는 부족하고, **더 강한 계정에 닿을 수
+없어야** 비로소 분리입니다.
+
+##### 세 단계로 나눕니다
+
+```
+mysql (healthy)
+  └─ migrate   앱 이미지 · migrate 프로파일 · extguard_migrator   → 종료 0
+       └─ grants    mysql:8.4 · root · grants.sql 적용             → 종료 0
+            └─ app      앱 이미지 · extguard_app · Flyway 비활성    → 상시 기동
+```
+
+**상시 실행되는 앱은 `extguard_app` 자격증명만 받습니다.** 마이그레이션 컨테이너는 보통의
+데이터소스로 마이그레이터에 접속하므로 `SPRING_FLYWAY_USER`라는 개념 자체가 없어집니다.
+
+정확히 적어둘 것이 하나 있습니다. **"컨테이너마다 계정이 하나씩"은 사실이 아닙니다** —
+`mysql`은 계정을 만들어야 하니 세 비밀번호를 다 받고, `grants`는 root를 받습니다. 지킬 수
+있는 불변식은 그보다 좁습니다: **오래 떠 있으면서 요청을 받는 프로세스가 자기 계정보다
+강한 자격증명을 갖지 않는다.** 나머지 둘은 부팅에만 관여하고 하나는 곧 종료합니다.
+`scripts/verify-grants.sh`가 검증하는 것도 정확히 그 경계입니다.
+
+**마이그레이션 컨테이너를 앱과 같은 이미지로 만든 이유**는 세 가지입니다. Flyway 버전이
+애플리케이션이 빌드된 버전과 항상 일치하고, 마이그레이션이 jar 안에 그대로 실려 있으며,
+인스턴스에서 빌드하므로 아키텍처가 자동으로 맞습니다(OCI Ampere는 ARM64 —
+`backend/Dockerfile` 상단 주석). 공식 `flyway/flyway` 이미지는 이 셋을 각각 따로 관리해야
+합니다.
+
+##### 종료를 데몬 스레드에 맡기지 않습니다
+
+one-shot 컨테이너는 **반드시 끝나야** 다음 단계가 시작됩니다. "웹 서버를 끄고 스케줄러를
+끄면 JVM이 알아서 끝난다"에 기대는 방법도 있지만, non-daemon 스레드를 만드는 빈이 하나만
+생겨도 깨지고 **그때 증상은 크래시가 아니라 배포가 영원히 대기하는 것**입니다.
+
+```java
+if (context.getEnvironment().matchesProfiles(MIGRATE_PROFILE)) {
+    System.exit(SpringApplication.exit(context, () -> 0));
+}
+```
+
+명시적 종료는 스레드 상태와 무관하게 성립합니다. `@Profile("!migrate")`로 스케줄링을 빼는
+것은 위생이지 종료의 근거가 아닙니다.
+
+**측정해서 확인했습니다.** 수정 전 jar을 웹 서버 없이 돌리면 45초 타임아웃까지 종료하지
+않고(`exit=124`), 수정 후 `migrate` 프로파일은 `exit=0`으로 끝나며 마이그레이션이 적용됩니다.
+
+##### 권한 축소가 더는 사람 손에 달려 있지 않습니다
+
+`grants.sql`은 수동 단계였고, `deploy/README.md`에 **"여기가 빠지기 쉬움"**이라고 적혀
+있었습니다. 빠뜨리면 `01-users.sql`의 임시 광범위 권한(`SELECT, INSERT, UPDATE, DELETE ON
+extguard.*`)이 영구히 남고, 아무도 알려주지 않습니다. 보호가 기억에 의존하는 구조였습니다.
+
+이제 컨테이너가 하고, **매 배포마다 다시 적용**해 권한을 좁게 유지합니다. 순서가 바뀌면서
+부수 효과가 하나 생겼습니다 — grants가 app보다 먼저 끝나므로 메울 공백이 없고, **앱 계정이
+단 한 순간도 스키마 전체 권한을 갖지 않습니다.** 임시 GRANT를 아예 없앴습니다.
+
+덕분에 `REVOKE` 재실행 문제도 사라졌습니다. 정상 경로에서 revoke할 것이 없어지고, 과거
+배포에서 남은 권한 정리를 위해 `REVOKE IF EXISTS`(MySQL 8.0.16+)로만 남겨 뒀습니다.
+
+##### 발견: `grants.sql`은 애초에 실행될 수 없는 자리에 있었습니다
+
+`mysql-init/`은 통째로 `/docker-entrypoint-initdb.d`에 마운트됩니다. 그 디렉터리의 파일은
+**DB 최초 기동 시** 실행되는데, 그때는 테이블이 없어 테이블 단위 GRANT가 불가능합니다.
+README가 이 파일을 "마이그레이션 이후 수동 실행"이라고 안내하고 있었으니, 처음부터 그
+자리에 있으면 안 되는 파일이었습니다. `deploy/grants.sql`로 옮겼습니다.
+
+##### 비밀번호를 커밋된 파일에서 뺐습니다
+
+`01-users.sql`에는 `IDENTIFIED BY 'CHANGE_ME_MIGRATOR'`가 리터럴로 들어 있었고 `.env`와
+손으로 맞춰야 했습니다. **운영자가 커밋된 파일을 편집하는 구조**라 실수로 커밋될 여지가
+있습니다. MySQL 이미지 엔트리포인트는 init 디렉터리의 `*.sh`도 실행하므로, `01-users.sh`로
+바꿔 환경변수를 읽게 했습니다. 이제 비밀번호는 `.env`에만 있고 맞출 대상이 없습니다.
+
+##### 커서 인덱스 (PR #4에서 넘긴 후속)
+
+`V4__index_purge_candidates.sql`이 `idx_upload_record_live`를
+**`(status, purged_at, created_at, id, size_bytes)`**로 교체합니다. V3의
+`(status, purged_at, size_bytes)`는 쿼터 합계는 커버하지만 `created_at`이 없어 보존 커서를
+반만 지원했습니다. 앞의 `(status, purged_at)`가 범위를 살아 있는 행으로 좁히므로 **purge된
+행을 읽지는 않습니다** — 빠진 것은 `created_at`이라, 살아 있는 후보를 **전부 꺼내 보존
+기한과 대조하고 정렬**해야 합니다. 커서 위치로 바로 찾아가 순서대로 읽는 대신입니다.
+비용이 살아 있는 행 수에 비례하는데, 그 수를 크게 유지하는 것이 쿼터의 목적입니다.
+
+**`id`를 명시한 위치가 핵심입니다.** InnoDB가 PK를 붙이는 것은 맞지만 **선언된 모든 컬럼
+뒤에** 붙습니다. `(status, purged_at, created_at, size_bytes)`로 두면 실제로는
+`(…, created_at, size_bytes, id)`가 되어, `created_at`이 같은 행들의 순서를 `size_bytes`가
+결정합니다. 커서의 `ORDER BY created_at, id`와 다릅니다. `id`를 네 번째에 적으면 정렬
+컬럼이 커서가 필요로 하는 자리에 옵니다. `size_bytes`는 뒤에 남겨 합계도 인덱스만으로
+답하게 합니다.
+
+`SchemaMigrationTest`가 **컬럼 순서**를 단언합니다 — 존재만 확인하면 순서가 뒤바뀌어도
+통과하고, 순서가 이 변경의 전부이기 때문입니다.
+
+##### 리뷰 4건 — "확인할 수단이 없다"와 "확인을 포기한다"는 다릅니다
+
+| 지적 | 문제 | 조치 |
+|---|---|---|
+| **CI가 H2만 돌아 이 PR의 핵심을 검증하지 못한다** | 마이그레이터 자격증명 분리와 테이블·컬럼 단위 권한은 **전부 MySQL 고유 동작**이라 H2 테스트 어디에도 걸리지 않습니다. H2가 증명하는 것은 마이그레이션이 적용된다는 것까지이고, `extguard_app`이 `fixed_extension_state`에 INSERT를 **못 한다**는 핵심은 아무것도 증명하지 못했습니다 | `scripts/verify-grants.sh` + CI job 추가. 실제 MySQL 8.4로 스택을 띄워 positive/negative SQL을 돌립니다 |
+| **`REVOKE ... ON extguard.*`가 테이블·컬럼 권한을 안 지운다** | 이 형식은 `mysql.db`만 건드립니다. 테이블 권한은 `mysql.tables_priv`, 컬럼 권한은 `mysql.columns_priv`에 따로 있습니다. `flyway_schema_history` GRANT를 **파일에서 빼기만** 했으므로 기존 배포에는 그대로 남고, "매 배포마다 allowlist로 재수렴"이 성립하지 않았습니다 | `ON` 절 없는 `REVOKE ALL PRIVILEGES, GRANT OPTION FROM` — 모든 레벨을 비우고 allowlist를 재부여 |
+| 인덱스에 `id`가 `size_bytes` 뒤에 붙는다 | 위 항목. **주석은 3컬럼일 때의 설명인데 정의는 4컬럼**이라 서로 달랐습니다 | `id`를 명시하고 주석을 정의에 맞게 다시 씀 |
+| 비밀번호를 SQL 리터럴에 보간한다 | `'`나 `\`가 들어오면 비밀번호가 약해지는 게 아니라 **문이 깨져 계정이 만들어지지 않습니다** | `01-users.sh`가 형식(`[A-Za-z0-9_-]`)을 검사해 먼저 실패. 문서에 `openssl rand -hex 32` 권장 |
+
+**첫 번째가 이 PR의 실패였습니다.** 저는 "Docker 데몬이 없어 권한 경계를 확인하지
+못했다"를 PR 본문에 **한계로 적어두고 끝냈습니다.** 정직하게 적었으니 됐다고 여긴
+것인데, CI 러너에는 Docker가 있었습니다. 확인할 수단이 없었던 게 아니라 **찾지 않은
+것**입니다. 그리고 그 미확인 목록이 바로 이 PR이 주장하는 전부였습니다.
+
+지금은 그 목록이 CI에서 매번 검증됩니다 — 3단계 부팅과 one-shot 종료, `01-users.sh`가
+init 디렉터리에서 실제로 실행되는지, `SHOW GRANTS` 결과까지.
+
+**negative 케이스가 이 스크립트의 본체입니다.** "할 수 있어야 하는 것"만 검사하면 권한을
+전부 열어놓아도 통과하는데, 그게 정확히 이 경계가 막으려는 상황입니다. 그래서 거부
+사유가 권한 때문인지도 함께 확인합니다 — 오타나 테이블 누락으로 인한 실패를 "경계가
+지켜졌다"로 읽으면 테스트가 잘못된 이유로 통과합니다.
+
+#### 4-5. 향후 확장
 
 - **사용자별 정책**: `fixed_extension_state`/`custom_extension`에 `owner_id`를 추가하고 UNIQUE를 `(owner_id, extension)`으로 변경. 감사 로그의 `actor`는 이미 사용자 ID를 받을 수 있는 형태.
 - **화이트리스트 전환**: `UploadValidator`의 R4만 "체인이 허용 목록에 포함되는가"로 뒤집으면 됩니다. 정책 저장 구조는 그대로 재사용 가능. 커스텀 200개 한도에 도달하는 것이 전환을 검토할 신호입니다.
