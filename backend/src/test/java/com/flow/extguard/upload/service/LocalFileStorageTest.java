@@ -97,16 +97,24 @@ class LocalFileStorageTest {
      * then that leaving it behind is worst, because it is indistinguishable from
      * a good file to everything except the sweep 24 hours later. "A failed store
      * leaves nothing behind" has to hold for the move too, not just the write.
+     *
+     * <p>The stub writes the target before throwing, because that is what the
+     * non-atomic fallback can actually do: {@code Files.move} without
+     * {@code ATOMIC_MOVE} may copy then delete, and the specification leaves both
+     * paths undefined if it throws partway. Throwing before touching the target
+     * would leave this case -- an incomplete file under a real {@code .bin} name
+     * -- unverified.
      */
     @Test
-    @DisplayName("leaves nothing behind when the move into place fails")
+    @DisplayName("leaves neither .part nor a half-written .bin when the move fails")
     void failedMoveLeavesNothingBehind() throws IOException {
         StorageProperties properties = new StorageProperties();
         properties.setRoot(root.toString());
         LocalFileStorage failingMove = new LocalFileStorage(properties) {
             @Override
             void moveIntoPlace(Path partial, Path target) throws IOException {
-                throw new IOException("simulated move failure");
+                Files.writeString(target, "half-copied target");
+                throw new IOException("simulated non-atomic move failure");
             }
         };
 
@@ -114,7 +122,7 @@ class LocalFileStorageTest {
                 .isInstanceOf(IOException.class);
 
         assertThat(filesOnDisk())
-                .as("a complete .part is still litter, and the sweep only finds it a day later")
+                .as("an incomplete .bin is worse than a .part: nothing can tell it from a good upload")
                 .isEmpty();
     }
 

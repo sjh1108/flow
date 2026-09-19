@@ -93,13 +93,19 @@ public class LocalFileStorage implements FileStorage {
         }
 
         // Only now does the file take a name the rest of the system recognises.
-        // The move needs the same cleanup as the write: it is the last step, but a
-        // failure here would leave behind a complete .part, which is exactly the
-        // litter this whole approach exists to avoid.
+        // Both paths are cleaned on failure, not just the source: a non-atomic
+        // move that throws partway leaves the target in an undefined state, so it
+        // may exist and be incomplete. An incomplete file under a .bin name is
+        // worse than a leftover .part -- nothing can tell it from a good upload,
+        // and the orphan sweep will not look at it for another day.
+        //
+        // Deleting the target is safe because it is a UUID minted for this upload
+        // and nothing else can own that path.
         try {
             moveIntoPlace(partial, target);
         } catch (IOException | RuntimeException e) {
             deleteQuietly(partial);
+            deleteQuietly(target);
             throw e;
         }
         return new StoredFile(relativeName, written, HexFormat.of().formatHex(digest.digest()));
@@ -107,12 +113,15 @@ public class LocalFileStorage implements FileStorage {
 
     /**
      * Moves the finished file to its final name, atomically where the filesystem
-     * allows it.
+     * supports it.
      *
-     * <p>Source and target are siblings, so this is a rename either way and the
-     * fallback is atomic in practice on POSIX and Windows alike. The fallback
-     * exists so that a filesystem without the explicit guarantee degrades to a
-     * plain rename rather than failing every upload.
+     * <p>The fallback exists so that a filesystem without {@code ATOMIC_MOVE}
+     * degrades instead of failing every upload. It buys availability, not the
+     * guarantee: a plain {@code Files.move} may be implemented as copy-then-delete,
+     * and the specification leaves the state of both paths <em>undefined</em> if it
+     * throws partway, so the target may exist and be incomplete. That is why the
+     * caller deletes the target as well as the source -- the atomicity has to be
+     * re-established by cleanup, since the move itself no longer provides it.
      *
      * <p>Package-private so a test can make it fail: a move that throws must
      * still leave the directory clean, and there is no portable way to make a
