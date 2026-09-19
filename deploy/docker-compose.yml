@@ -30,7 +30,10 @@ services:
       - mysql-data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      # No password: `mysqladmin ping` succeeds whenever the server answers the
+      # handshake, access denied included, so the credential adds nothing here
+      # and would only put the root password in the container's argv.
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -89,8 +92,12 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      # MYSQL_PWD rather than -p on the command line: the client reads it from
-      # the environment, so the password never appears in the container's argv.
+      # MYSQL_PWD only to keep the password out of this container's argv, where
+      # any process in it could read the command line. It is not the more secure
+      # option in general -- MySQL's own documentation calls MYSQL_PWD insecure,
+      # since the environment is readable too. Doing better means a Docker
+      # secret or a client config file, which is more machinery than a one-shot
+      # on a single-instance deployment needs.
       MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
     volumes:
       - ./grants.sql:/grants.sql:ro
