@@ -63,7 +63,9 @@ app보다 먼저 끝나므로 메울 공백이 없고, **앱 계정은 단 한 �
 
 ```sql
 -- 고정 확장자: 읽기와 토글만. INSERT 없음. DELETE 없음.
-GRANT SELECT, UPDATE ON extguard.fixed_extension_state TO 'extguard_app'@'%';
+-- UPDATE는 컬럼 단위 — 이름을 바꾸는 것도 지우는 것만큼 목록을 무력화합니다.
+GRANT SELECT ON extguard.fixed_extension_state TO 'extguard_app'@'%';
+GRANT UPDATE (blocked, updated_at) ON extguard.fixed_extension_state TO 'extguard_app'@'%';
 
 -- 커스텀 확장자: 사용자가 추가·삭제하므로 행 제어 필요
 GRANT SELECT, INSERT, DELETE ON extguard.custom_extension TO 'extguard_app'@'%';

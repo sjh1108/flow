@@ -47,8 +47,14 @@
 -- "re-converge on the allowlist" requires.
 REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'extguard_app'@'%';
 
--- Fixed extensions: read and toggle only. No INSERT. No DELETE.
-GRANT SELECT, UPDATE ON extguard.fixed_extension_state TO 'extguard_app'@'%';
+-- Fixed extensions: read and toggle only. No INSERT. No DELETE -- and the
+-- UPDATE is column-scoped, because a table-wide one would also let the account
+-- rewrite `extension` itself. Renaming 'exe' to something harmless defeats the
+-- fixed list just as thoroughly as deleting the row, so "it can only flip the
+-- checkbox" has to be granted, not just asserted. The application writes
+-- exactly these two columns; see FixedExtensionStateRepository#updateBlocked.
+GRANT SELECT ON extguard.fixed_extension_state TO 'extguard_app'@'%';
+GRANT UPDATE (blocked, updated_at) ON extguard.fixed_extension_state TO 'extguard_app'@'%';
 
 -- Custom extensions: added and removed by users, so full row control.
 GRANT SELECT, INSERT, DELETE ON extguard.custom_extension TO 'extguard_app'@'%';

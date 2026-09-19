@@ -665,7 +665,10 @@ README가 이 파일을 "마이그레이션 이후 수동 실행"이라고 안�
 `V4__index_purge_candidates.sql`이 `idx_upload_record_live`를
 **`(status, purged_at, created_at, id, size_bytes)`**로 교체합니다. V3의
 `(status, purged_at, size_bytes)`는 쿼터 합계는 커버하지만 `created_at`이 없어 보존 커서를
-반만 지원했습니다 — purge된 행을 읽고 버리고, 테이블이 오래될수록 그 비율이 올라갑니다.
+반만 지원했습니다. 앞의 `(status, purged_at)`가 범위를 살아 있는 행으로 좁히므로 **purge된
+행을 읽지는 않습니다** — 빠진 것은 `created_at`이라, 살아 있는 후보를 **전부 꺼내 보존
+기한과 대조하고 정렬**해야 합니다. 커서 위치로 바로 찾아가 순서대로 읽는 대신입니다.
+비용이 살아 있는 행 수에 비례하는데, 그 수를 크게 유지하는 것이 쿼터의 목적입니다.
 
 **`id`를 명시한 위치가 핵심입니다.** InnoDB가 PK를 붙이는 것은 맞지만 **선언된 모든 컬럼
 뒤에** 붙습니다. `(status, purged_at, created_at, size_bytes)`로 두면 실제로는

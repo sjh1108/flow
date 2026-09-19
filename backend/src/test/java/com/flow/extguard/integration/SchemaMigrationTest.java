@@ -88,9 +88,10 @@ class SchemaMigrationTest {
 
     /**
      * V4 replaces V3's index so one index serves both scheduled reads: the quota
-     * sum (answered from the index alone) and the retention cursor (which needs
-     * created_at to order by, and would otherwise read purged rows only to
-     * discard them).
+     * sum (answered from the index alone) and the retention cursor. V3's index
+     * already confined the range to live rows; what it lacked was created_at,
+     * so the cursor had to test every live candidate against the cutoff and
+     * sort the survivors rather than seek and read in order.
      *
      * <p>Column order is the whole point, so the order is what is asserted --
      * that the index merely exists would pass with the columns any way round.

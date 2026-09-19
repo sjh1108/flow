@@ -119,11 +119,38 @@ printf '%s' "$accounts" | grep -q extguard_migrator; check $? \
 
 health=$(curl -sf http://localhost:8080/actuator/health 2>&1)
 printf '%s' "$health" | grep -q '"status":"UP"'; check $? \
-  "앱이 앱 계정만으로 기동 (Flyway 없이)" "$health"
+  "앱이 기동" "$health"
+
+# The health check says the app runs; it says nothing about what it was handed.
+# Every privilege check below would still pass if someone put
+# SPRING_FLYWAY_PASSWORD back into the app service -- the account the app
+# *connects* as would be unchanged, while the account it *could* connect as
+# would be the migrator again. That is the whole invariant of this PR, so it is
+# read off the running container rather than trusted to the compose file.
+container_env() { docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$(compose ps -aq "$1")" 2>/dev/null; }
+
+app_env=$(container_env app)
+migrate_env=$(container_env migrate)
+
+printf '%s' "$app_env" | grep -q '^DB_USERNAME=extguard_app$'; check $? \
+  "app이 extguard_app으로 접속"
+printf '%s' "$app_env" | grep -qE '^(MIGRATOR_PASSWORD|SPRING_FLYWAY_USER|SPRING_FLYWAY_PASSWORD)='
+[ $? -ne 0 ]; check $? "app에 마이그레이션용 변수가 없음" \
+  "$(printf '%s' "$app_env" | grep -E 'MIGRATOR|FLYWAY')"
+# Not just the variable names: the value itself must be absent, or a rename
+# would smuggle the same secret back in under a different key.
+printf '%s' "$app_env" | grep -q "$MIGRATOR_PW"
+[ $? -ne 0 ]; check $? "app 환경 어디에도 마이그레이터 비밀번호 값이 없음"
+
+printf '%s' "$migrate_env" | grep -q '^DB_USERNAME=extguard_migrator$'; check $? \
+  "migrate가 extguard_migrator로 접속"
+printf '%s' "$migrate_env" | grep -q "$APP_PW"
+[ $? -ne 0 ]; check $? "migrate 환경 어디에도 앱 비밀번호 값이 없음"
 
 printf "\n${BOLD}2. 앱 계정이 할 수 있어야 하는 것${OFF}\n"
 app_can "SELECT COUNT(*) FROM fixed_extension_state;" "고정 확장자 조회"
-app_can "UPDATE fixed_extension_state SET blocked = TRUE WHERE extension = 'exe';" "고정 확장자 토글"
+app_can "UPDATE fixed_extension_state SET blocked = TRUE, updated_at = NOW(6) WHERE extension = 'exe';" \
+  "고정 확장자 토글 (blocked + updated_at, 앱이 실제로 쓰는 두 컬럼)"
 app_can "INSERT INTO custom_extension (extension, created_at) VALUES ('tmpchk', NOW(6));" "커스텀 확장자 추가"
 app_can "DELETE FROM custom_extension WHERE extension = 'tmpchk';" "커스텀 확장자 삭제"
 app_can "INSERT INTO upload_record (original_filename, display_filename, size_bytes, status, created_at) VALUES ('a.txt', 'a.txt', 1, 'ACCEPTED', NOW(6));" "업로드 기록 추가"
@@ -133,6 +160,10 @@ printf "\n${BOLD}3. 앱 계정이 할 수 없어야 하는 것${OFF}\n"
 printf "  ${BOLD}여기가 실제 단언입니다${OFF} — 권한을 전부 열어도 2절은 그대로 통과합니다\n"
 app_cannot "INSERT INTO fixed_extension_state (extension, blocked, updated_at) VALUES ('sh', FALSE, NOW(6));" "고정 확장자를 새로 만들 수 없음"
 app_cannot "DELETE FROM fixed_extension_state WHERE extension = 'exe';" "고정 확장자를 지울 수 없음"
+# Renaming the row defeats the fixed list as surely as deleting it, so the
+# UPDATE grant is column-scoped and this is what proves the scope.
+app_cannot "UPDATE fixed_extension_state SET extension = 'harmless' WHERE extension = 'exe';" \
+  "고정 확장자의 이름을 바꿀 수 없음 (blocked 외 컬럼)"
 app_cannot "UPDATE upload_record SET original_filename = 'rewritten.txt';" "업로드 이력을 고쳐 쓸 수 없음 (purged_at 외 컬럼)"
 app_cannot "DELETE FROM upload_record;" "업로드 이력을 지울 수 없음"
 app_cannot "UPDATE policy_audit_log SET actor = 'forged';" "감사 로그를 고쳐 쓸 수 없음"

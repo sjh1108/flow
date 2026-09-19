@@ -8,8 +8,12 @@
 --               over rather than re-read forever
 --
 -- V3's (status, purged_at, size_bytes) covers the first and only half-serves the
--- second: it has no created_at, so the scan reads and discards rows that were
--- purged long ago, and the share of those grows as the table ages.
+-- second. Its leading (status, purged_at) does confine the range to accepted,
+-- unpurged rows -- purged rows are not read. What is missing is created_at:
+-- every live candidate has to be fetched and tested against the retention
+-- cutoff, and the survivors sorted, instead of seeking straight to the cursor
+-- and reading in order. The cost grows with the live set, which is the set the
+-- quota is deliberately keeping large.
 --
 -- id is named explicitly, and its position is the point. InnoDB appends the
 -- primary key to a secondary index, but it appends it *after* every column the
