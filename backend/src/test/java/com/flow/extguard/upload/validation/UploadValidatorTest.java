@@ -265,6 +265,20 @@ class UploadValidatorTest {
         assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
     }
 
+    /**
+     * {@code .out} is a filename convention rather than a format. A compiler
+     * writes {@code a.out} when given no {@code -o}, but the same extension names
+     * redirected output just as often, so it declares nothing about the content.
+     */
+    @Test
+    @DisplayName("rejects an ELF binary under the conventional .out extension")
+    void rejectsElfUnderConventionalOutExtension() {
+        var verdict = validator.validate(candidate("results.out", ELF_HEADER), Set.of());
+
+        assertThat(verdict.rejected()).isTrue();
+        assertThat(verdict.code()).isEqualTo(ApiErrorCode.EXECUTABLE_CONTENT);
+    }
+
     // --- js is a fixed extension, so its checkbox has to govern -------------
 
     @Test

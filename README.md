@@ -48,10 +48,12 @@ http://localhost:8081 을 엽니다.
 ## 검증
 
 ```bash
-cd backend && ./gradlew test        # 156건
-scripts/verify.sh                   # 38건 (실행 중인 API 대상)
-node scripts/ui-verify.mjs          # 19건 (npm install playwright 필요)
+cd backend && ./gradlew test        # 단위·통합 테스트
+scripts/verify.sh                   # API 엔드투엔드 (실행 중인 API 대상)
+node scripts/ui-verify.mjs          # 브라우저 (npm install playwright 필요)
 ```
+
+검증 건수는 [`docs/00-requirements-traceability.md`](docs/00-requirements-traceability.md)의 「검증 총계」 한 곳에서만 관리합니다.
 
 ## 구조
 
