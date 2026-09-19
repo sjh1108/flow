@@ -59,6 +59,15 @@ public class StorageProperties {
     /** When the reclaim job runs. Spring cron expression, six fields. */
     private String cleanupCron = "0 30 3 * * *";
 
+    /**
+     * How many expired records the reclaim job holds in memory at a time.
+     *
+     * <p>Only bounds memory per round; the job walks the whole expired set either
+     * way, advancing a cursor so that a batch whose deletes fail does not block
+     * the ones behind it.
+     */
+    private int cleanupBatchSize = 500;
+
     public String getRoot() {
         return root;
     }
@@ -121,5 +130,13 @@ public class StorageProperties {
 
     public void setCleanupCron(String cleanupCron) {
         this.cleanupCron = cleanupCron;
+    }
+
+    public int getCleanupBatchSize() {
+        return cleanupBatchSize;
+    }
+
+    public void setCleanupBatchSize(int cleanupBatchSize) {
+        this.cleanupBatchSize = cleanupBatchSize;
     }
 }

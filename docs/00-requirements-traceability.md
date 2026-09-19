@@ -93,6 +93,6 @@
 
 | 계층 | 건수 | 실행 방법 |
 |---|---|---|
-| 백엔드 단위·통합 테스트 | **188** | `cd backend && ./gradlew test` |
+| 백엔드 단위·통합 테스트 | **189** | `cd backend && ./gradlew test` |
 | API 엔드투엔드 (curl) | **38** | `scripts/verify.sh` |
 | 브라우저 (Playwright + Chromium) | **23** | `docs/04-deployment.md` 참조 |

@@ -37,9 +37,33 @@ public interface UploadRecordRepository extends Repository<UploadRecord, Long> {
             """)
     long sumLiveBytes();
 
-    /** Accepted uploads whose files are old enough to delete and still on disk. */
-    List<UploadRecord> findByStatusAndPurgedAtIsNullAndCreatedAtLessThanOrderByCreatedAtAsc(
-            UploadStatus status, Instant cutoff, Pageable pageable);
+    /**
+     * Accepted uploads old enough to delete and still on disk, taken in
+     * {@code (createdAt, id)} order after the given cursor.
+     *
+     * <p>A cursor rather than an offset, because a candidate whose delete fails
+     * stays a candidate. Paging by offset would re-read the same failures at the
+     * head of every page and never reach what lies behind them: one stuck
+     * directory would stop reclaim for the whole table. The cursor moves past a
+     * failure within the same run and comes back to it on the next one.
+     *
+     * <p>Pass {@link Instant#EPOCH} and {@code 0} to start. No record can precede
+     * the epoch -- {@code createdAt} is assigned from {@code Instant.now()} when
+     * the row is built -- so that pair is a safe sentinel.
+     */
+    @Query("""
+            select r from UploadRecord r
+             where r.status = com.flow.extguard.upload.domain.UploadStatus.ACCEPTED
+               and r.purgedAt is null
+               and r.createdAt < :cutoff
+               and (r.createdAt > :afterCreatedAt
+                    or (r.createdAt = :afterCreatedAt and r.id > :afterId))
+             order by r.createdAt asc, r.id asc
+            """)
+    List<UploadRecord> findPurgeCandidatesAfter(@Param("cutoff") Instant cutoff,
+                                                @Param("afterCreatedAt") Instant afterCreatedAt,
+                                                @Param("afterId") long afterId,
+                                                Pageable pageable);
 
     /**
      * Records the fact that the files are gone.

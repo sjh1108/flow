@@ -39,8 +39,8 @@ public class StorageMaintenanceService {
 
     private static final Logger log = LoggerFactory.getLogger(StorageMaintenanceService.class);
 
-    /** Bounds how much is held in memory per round; the loop continues regardless. */
-    private static final int BATCH_SIZE = 500;
+    /** Chunk size for the orphan sweep's name lookups. */
+    private static final int LOOKUP_CHUNK = 500;
 
     private final FileStorage storage;
     private final UploadRecordRepository recordRepository;
@@ -69,6 +69,11 @@ public class StorageMaintenanceService {
     /**
      * Deletes files past the retention period and marks their records.
      *
+     * <p>Candidates are walked by a {@code (createdAt, id)} cursor, so a record
+     * whose delete fails is stepped over rather than re-read at the head of the
+     * next page. Offset paging would starve everything behind a persistent
+     * failure -- a single undeletable file would stop reclaim entirely.
+     *
      * <p>The file goes before the row is marked, and the row is marked only if
      * the delete reported success. Interrupted halfway -- or refused by the
      * filesystem -- the row stays unmarked and the next round retries it;
@@ -86,12 +91,20 @@ public class StorageMaintenanceService {
      */
     public int purgeExpired() {
         Instant cutoff = Instant.now().minus(storageProperties.getRetention());
+        int batchSize = storageProperties.getCleanupBatchSize();
         int total = 0;
 
+        // The cursor is what keeps a failure from blocking everything behind it.
+        // Reading page 0 each round instead would hand back the same unpurged
+        // rows forever: one directory the process cannot delete from would stall
+        // reclaim for the entire table, and the quota would fill with nothing
+        // able to free it.
+        Instant afterCreatedAt = Instant.EPOCH;
+        long afterId = 0;
+
         while (true) {
-            List<UploadRecord> expired =
-                    recordRepository.findByStatusAndPurgedAtIsNullAndCreatedAtLessThanOrderByCreatedAtAsc(
-                            UploadStatus.ACCEPTED, cutoff, PageRequest.of(0, BATCH_SIZE));
+            List<UploadRecord> expired = recordRepository.findPurgeCandidatesAfter(
+                    cutoff, afterCreatedAt, afterId, PageRequest.of(0, batchSize));
             if (expired.isEmpty()) {
                 return total;
             }
@@ -106,7 +119,7 @@ public class StorageMaintenanceService {
                     purgedIds.add(record.getId());
                 } else {
                     log.error("Leaving '{}' unpurged: its file could not be deleted. "
-                            + "The next run will retry it", record.getStoredName());
+                            + "Moving on; the next run will retry it", record.getStoredName());
                 }
             }
 
@@ -116,11 +129,13 @@ public class StorageMaintenanceService {
                 total += purgedIds.size();
             }
 
-            // Nothing marked means every delete in this page failed, and the same
-            // page would come back forever. Stop and let the next run retry.
-            if (purgedIds.isEmpty() || expired.size() < BATCH_SIZE) {
+            if (expired.size() < batchSize) {
                 return total;
             }
+
+            UploadRecord last = expired.getLast();
+            afterCreatedAt = last.getCreatedAt();
+            afterId = last.getId();
         }
     }
 
@@ -139,8 +154,8 @@ public class StorageMaintenanceService {
 
         try {
             List<String> onDisk = storage.listStoredNamesModifiedBefore(cutoff);
-            for (int from = 0; from < onDisk.size(); from += BATCH_SIZE) {
-                List<String> chunk = onDisk.subList(from, Math.min(from + BATCH_SIZE, onDisk.size()));
+            for (int from = 0; from < onDisk.size(); from += LOOKUP_CHUNK) {
+                List<String> chunk = onDisk.subList(from, Math.min(from + LOOKUP_CHUNK, onDisk.size()));
                 Set<String> known = new HashSet<>(recordRepository.findKnownStoredNames(chunk));
                 for (String candidate : chunk) {
                     if (!known.contains(candidate)) {
