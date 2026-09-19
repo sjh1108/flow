@@ -16,19 +16,33 @@ import java.util.Optional;
  * cannot slip past the ceiling by spending the same headroom ten times.
  *
  * <p><strong>Not synchronised, and not meant to be.</strong> Usage is read once
- * per request, so concurrent requests that start together all see the same total
- * and each may spend against it. The overshoot is therefore bounded by what a
- * single request can carry -- {@code maxFilesPerRequest x maxFileSize}, 200MB at
- * the defaults -- times the number of requests in flight, not by one file size.
- * With a 10GB quota, ten simultaneous full batches could land roughly 2GB over
- * before the next request sees the new total and refuses.
+ * per request, so requests that overlap all see the same total and each may
+ * spend the same headroom. "Overlap" is specific: a request counts if it reads
+ * the total before the others commit their rows, so the window is read-to-commit
+ * -- roughly the time it takes to write the files -- not wall-clock concurrency.
  *
- * <p>Two knobs shrink that window without any locking: a lower
- * {@code max-files-per-request} or a lower {@code max-file-size}. Re-reading the
- * total per file instead of per request would tighten it by the batch factor at
- * the cost of a query per file. Holding a reservation across the write, the only
- * way to make it exact, would serialise uploads; that is not worth it here, but
- * the bound is larger than a single file and should be read as such.
+ * <p>Writing Q for the quota, U for the committed usage the overlapping requests
+ * all read, K for {@code maxFilesPerRequest x maxFileSize} (the most one request
+ * can carry) and N for the number that overlap, each request writes at most
+ * {@code min(Q - U, K)}, so the final total is at most {@code U + N x min(Q-U, K)}
+ * and therefore
+ *
+ * <pre>
+ *   overshoot &lt;= (N - 1) x min(Q - U, K)
+ * </pre>
+ *
+ * At the defaults K is 200MB, so ten overlapping full batches against a 10GB
+ * quota land at most 1.8GB over -- and only when usage was already within K of
+ * the ceiling. Below that, the first term binds instead and the overshoot is
+ * smaller; at exactly the ceiling it is zero, because every request then sees no
+ * headroom at all.
+ *
+ * <p>Lowering {@code max-files-per-request} or {@code max-file-size} shrinks K
+ * and the bound with it. Re-reading the total per file rather than per request
+ * would replace K with one file size, at the cost of a query per file. Only a
+ * reservation held across the write makes it exact, and that serialises uploads.
+ * The looser bound is accepted here because {@code minFreeSpace} guards the disk
+ * independently, so an overshoot costs budget accuracy rather than a failed write.
  */
 final class StorageBudget {
 
