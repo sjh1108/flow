@@ -21,6 +21,10 @@ uploads/
 # Node (only used for the browser verification script)
 node_modules/
 package-lock.json
+# Byproduct of `npm install playwright`, which the browser verification needs.
+# Anchored to the repository root on purpose: a real manifest added under
+# frontend/ or elsewhere should still be tracked.
+/package.json
 
 # Editors / OS
 .idea/

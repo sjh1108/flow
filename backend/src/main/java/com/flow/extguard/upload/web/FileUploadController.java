@@ -34,9 +34,19 @@ public class FileUploadController {
     }
 
     /**
-     * @return 200 when at least one file was accepted, 422 when every file was
-     *         rejected. The body shape is identical either way, so the client
-     *         renders per-file verdicts without branching on the status.
+     * @return 200 when at least one file was accepted; 507 when every file was
+     *         rejected and every rejection was for capacity, so the same files
+     *         may succeed once space is reclaimed; 422 when every file was
+     *         rejected and at least one of them on its own merits.
+     *         <p>422 covers the mixed batch too, where one file was blocked and
+     *         another only lacked room. The status is the batch's, not each
+     *         file's: it never promises a retry that cannot succeed, and
+     *         per-file retryability is in {@code results[].code}.
+     *         <p>The body shape is identical in all three cases and carries the
+     *         per-file verdicts. A client should key on that body rather than on
+     *         a list of status codes -- this list has already grown once, and the
+     *         client that enumerated 200 and 422 silently discarded every verdict
+     *         in a 507 response.
      */
     // 'files' is optional at the binding layer so that a request without the part
     // reaches the service and gets the proper NO_FILE_SUBMITTED message, rather
@@ -46,8 +56,7 @@ public class FileUploadController {
             @RequestParam(value = "files", required = false) List<MultipartFile> files,
             HttpServletRequest request) {
         UploadResponse response = uploadService.upload(files, RequestActors.clientIp(request));
-        HttpStatus status = response.allRejected() ? HttpStatus.UNPROCESSABLE_CONTENT : HttpStatus.OK;
-        return ResponseEntity.status(status).body(response);
+        return ResponseEntity.status(response.status()).body(response);
     }
 
     @GetMapping

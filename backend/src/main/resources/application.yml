@@ -41,6 +41,19 @@ extguard:
     root: ${STORAGE_ROOT:/var/lib/extguard/files}
     max-file-size: 20MB
     max-files-per-request: 10
+    # Ceilings. The quota is this application's own budget; min-free-space
+    # keeps headroom on the disk, which the quota knows nothing about. Neither
+    # is exact: both are read once per request, so overlapping requests can
+    # spend the same headroom, and free space moves under other processes
+    # regardless. They lower the odds of running out, not to zero -- a write
+    # that fails anyway cleans up after itself (see LocalFileStorage).
+    quota: ${STORAGE_QUOTA:10GB}
+    min-free-space: ${STORAGE_MIN_FREE_SPACE:1GB}
+    # Reclaim. Files older than the retention period are deleted; their
+    # upload_record rows stay and are marked purged.
+    retention: ${STORAGE_RETENTION:30d}
+    orphan-grace-period: 24h
+    cleanup-cron: ${STORAGE_CLEANUP_CRON:0 30 3 * * *}
   policy:
     max-custom-extensions: 200
     max-extension-length: 20

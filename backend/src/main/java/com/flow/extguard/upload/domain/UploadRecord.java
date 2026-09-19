@@ -68,6 +68,18 @@ public class UploadRecord {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    /**
+     * When the stored file was deleted by the retention job, or null while it is
+     * still on disk.
+     *
+     * <p>Deliberately has no setter and no builder method. The reclaim job sets
+     * it through an update query so that this record stays immutable once built,
+     * and so the application's database grant can be narrowed to this one column
+     * -- every other column remains append-only.
+     */
+    @Column(name = "purged_at")
+    private Instant purgedAt;
+
     protected UploadRecord() {
     }
 
@@ -140,6 +152,10 @@ public class UploadRecord {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Instant getPurgedAt() {
+        return purgedAt;
     }
 
     public static final class Builder {

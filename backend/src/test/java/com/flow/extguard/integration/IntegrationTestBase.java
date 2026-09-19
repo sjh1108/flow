@@ -1,5 +1,12 @@
 package com.flow.extguard.integration;
 
+import com.flow.extguard.config.StorageProperties;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.stream.Stream;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +37,14 @@ abstract class IntegrationTestBase {
     @Autowired
     private DataSource dataSource;
 
+    @Autowired
+    protected StorageProperties storageProperties;
+
     protected JdbcTemplate jdbc;
+
+    protected Path storageRoot() {
+        return Path.of(storageProperties.getRoot()).toAbsolutePath().normalize();
+    }
 
     @BeforeEach
     void resetDatabase() {
@@ -41,5 +55,34 @@ abstract class IntegrationTestBase {
         // Restore the seeded rows to their default state without deleting them --
         // the application account could not recreate them.
         jdbc.execute("UPDATE fixed_extension_state SET blocked = FALSE");
+    }
+
+    /**
+     * Empties the storage root as well as the tables.
+     *
+     * <p>The root is a fixed path under the temp directory shared by every test
+     * class, so without this files pile up across runs. That is untidy for most
+     * tests and wrong for the orphan sweep, which would otherwise find another
+     * test's leftovers and count them as orphans.
+     */
+    @BeforeEach
+    void resetStorage() {
+        Path root = storageRoot();
+        if (!Files.isDirectory(root)) {
+            return;
+        }
+        try (Stream<Path> paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder())
+                    .filter(path -> !path.equals(root))
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    });
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 }

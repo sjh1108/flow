@@ -29,6 +29,14 @@ GRANT SELECT, INSERT, DELETE ON extguard.custom_extension TO 'extguard_app'@'%';
 GRANT SELECT, INSERT ON extguard.policy_audit_log TO 'extguard_app'@'%';
 GRANT SELECT, INSERT ON extguard.upload_record TO 'extguard_app'@'%';
 
+-- The one exception, and it is deliberately the narrowest one MySQL allows.
+-- The storage reclaim job deletes files past the retention period and has to
+-- record that it did; a column-level grant lets it write purged_at and nothing
+-- else. What was uploaded, what was refused and why all remain unwritable, so
+-- "the application never rewrites history" still holds for every column that
+-- carries history. No DELETE is granted: rows are marked, never removed.
+GRANT UPDATE (purged_at) ON extguard.upload_record TO 'extguard_app'@'%';
+
 -- Flyway's own history table is read by the app at startup for validation.
 GRANT SELECT ON extguard.flyway_schema_history TO 'extguard_app'@'%';
 
