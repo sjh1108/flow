@@ -1,0 +1,21 @@
+# The schema-migration run: bring the database up to date, then exit.
+#
+# This profile is what separates migration rights from application rights. The
+# container running it connects as extguard_migrator through the ordinary
+# datasource properties, so Flyway needs no credentials of its own -- and the
+# application container, which runs without this profile, never receives the
+# migrator's password at all. Two processes, one account each, neither holding
+# the other's.
+#
+# The process exits when the context is up; see ExtGuardApplication.
+spring:
+  main:
+    # No web server: this run answers no requests, and binding a port would make
+    # two containers of the same image fight over it.
+    web-application-type: none
+
+  flyway:
+    # Explicit rather than inherited. This is the only process that may migrate,
+    # and saying so here means the deployment does not depend on the default
+    # staying true.
+    enabled: true

@@ -81,7 +81,8 @@
 | 4-1 | 새로고침 / 동시 편집 정합성 | UNIQUE 인덱스가 최종 보증, 모든 변경 응답이 최신 스냅샷 반환 | `PolicyApiIntegrationTest#rejectsDuplicates`, `#fixedToggleIsPersisted` |
 | 4-2 | 로그 / 모니터링 | `policy_audit_log`, `upload_record`(승인·거부 모두), WARN/INFO 로그, `/actuator/health` | `docs/01-decisions.md` 4-2 |
 | 4-3 | 저장소 고갈 방어 | 쿼터 10GB + 디스크 최소 여유 1GB, 보존 30일 정리, 고아·부분 파일 정리 (`StorageBudget`, `StorageMaintenanceService`, `LocalFileStorage`) | `StorageQuotaIntegrationTest`, `StorageMaintenanceIntegrationTest`, **`StorageMaintenanceFailureIntegrationTest`**(삭제 실패 시 재시도), `LocalFileStorageTest` |
-| 4-4 | 향후 확장 (사용자별 정책 / 화이트리스트) | 확장 지점 문서화 | `docs/01-decisions.md` 4-4 |
+| 4-4 | DB 권한 분리 실효화 | 마이그레이션을 별도 one-shot 컨테이너로 분리해 앱이 마이그레이터 자격증명을 갖지 않게 함. 권한 축소(`deploy/grants.sql`)를 `grants` 컨테이너가 매 배포마다 적용 (`deploy/docker-compose.yml`, `application-migrate.yml`, `SchedulingConfig`) | `MigrateProfileTest`<br>`SchemaMigrationTest#liveUsageIndexAlsoOrdersThePurgeCursor`<br>`docker compose config`로 자격증명 분리 확인 (`docs/01-decisions.md` 4-4) |
+| 4-5 | 향후 확장 (사용자별 정책 / 화이트리스트) | 확장 지점 문서화 | `docs/01-decisions.md` 4-5 |
 
 ---
 
@@ -93,6 +94,6 @@
 
 | 계층 | 건수 | 실행 방법 |
 |---|---|---|
-| 백엔드 단위·통합 테스트 | **190** | `cd backend && ./gradlew test` |
+| 백엔드 단위·통합 테스트 | **194** | `cd backend && ./gradlew test` |
 | API 엔드투엔드 (curl) | **38** | `scripts/verify.sh` |
 | 브라우저 (Playwright + Chromium) | **23** | `docs/04-deployment.md` 참조 |

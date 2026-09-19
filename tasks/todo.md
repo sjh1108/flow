@@ -134,10 +134,57 @@
 
 ---
 
+## DB 권한 분리 실효화
+
+**계정을 나눈 것과 분리한 것은 다르다.** 앱 컨테이너가 `SPRING_FLYWAY_PASSWORD`로
+마이그레이터(`ALL PRIVILEGES`) 자격증명을 들고 있었으므로, 앱을 장악한 쪽은 자기
+환경변수를 읽어 그 계정으로 붙으면 그만이었다. `grants.sql`이 막겠다고 적어둔 위협
+모델이 정확히 그 경우다.
+
+- [x] 마이그레이션을 `migrate` 프로파일의 one-shot 컨테이너로 분리.
+      앱에서 `SPRING_FLYWAY_*` 제거, `SPRING_FLYWAY_ENABLED=false`
+- [x] 종료를 데몬 스레드에 맡기지 않고 `System.exit(SpringApplication.exit(...))`로 명시
+- [x] `grants`를 one-shot 서비스로 자동화. 매 배포마다 재적용
+- [x] 순서가 바뀌어 임시 광범위 권한이 불필요해짐 — **앱 계정이 단 한 순간도
+      `extguard.*` 전체 권한을 갖지 않음**
+- [x] `01-users.sql` → `01-users.sh`. 비밀번호를 커밋된 파일에서 제거
+- [x] V4 인덱스 — 커서 쿼리가 purge된 행을 헛읽지 않게 (PR #4에서 넘긴 후속)
+
+### 계획에 없었는데 발견한 것
+
+`grants.sql`이 `mysql-init/`에 있어 `/docker-entrypoint-initdb.d`로 마운트되고 있었다.
+그 디렉터리는 **DB 최초 기동 시** 실행되는데 그때는 테이블이 없어 테이블 단위 GRANT가
+불가능하다. README는 이 파일을 "마이그레이션 이후 수동 실행"이라고 안내하고 있었으니,
+처음부터 그 자리에 있으면 안 되는 파일이었다. `deploy/grants.sql`로 옮겼다.
+
+### 검증
+
+- [x] **one-shot이 실제로 종료하는지 — 실패를 먼저 재현했다.** 수정 전 jar을 웹 서버
+      없이 돌리면 45초 타임아웃까지 종료하지 않고(`exit=124`), 수정 후 `migrate`
+      프로파일은 `exit=0`에 마이그레이션 3건 적용
+- [x] `docker compose config`(데몬 불필요)로 의존 체인과 **앱 환경변수에 마이그레이터
+      흔적 0건**, 두 컨테이너의 `DB_PASSWORD`가 서로 다름을 기계적으로 확인
+- [x] `ALTER TABLE ... DROP INDEX`가 H2 MySQL 모드에서 도는지 **가정하지 않고 실행해 확인**
+- [x] `gradlew test` 전부 통과 / 실패 0, `verify.sh`·`ui-verify.mjs` 회귀 없음
+
+### 확인하지 못한 것
+
+**이 환경에는 Docker 데몬이 없다**(CLI만 있고 `/var/run/docker.sock` 없음). 다음은
+인스턴스에서 확인해야 한다.
+
+- 3단계 부팅이 실제로 순서대로 도는지
+- `01-users.sh`가 init 디렉터리에서 실행되는지 — MySQL 이미지가 `*.sh`를 실행한다는 것은
+  **문서 기반이고 실행해 확인하지 못했다**
+- `REVOKE IF EXISTS`가 MySQL 8.4에서 의도대로 동작하는지
+- `SHOW GRANTS FOR 'extguard_app'@'%'` 결과
+- MySQL 옵티마이저가 V4 인덱스를 선택하는지(`EXPLAIN`) — H2 테스트가 증명하는 것은
+  마이그레이션이 그 인덱스를 만든다는 것까지다
+
+---
+
 ## 다음
 
-**DB 권한 분리 실효화** — one-shot 마이그레이션 컨테이너, 앱 환경변수에서
-`SPRING_FLYWAY_*` 제거. 이번 PR에서 `02-grants.sql`을 건드렸으므로 함께 검토할 것.
+`CLAUDE.md`에 적힌 계획 작업은 이것으로 끝났다.
 
 미결로 남긴 것: 고아 스윕이 이름 목록 전체를 메모리에 올린다. 작은 파일이 아주 많은
 저장소에서만 문제가 되고, 고치려면 `FileStorage`가 `Stream`을 반환해야 한다.
