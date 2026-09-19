@@ -107,7 +107,9 @@ class SchemaMigrationTest {
                         + "ORDER BY ordinal_position", String.class);
 
         assertThat(columns)
-                .as("created_at must precede size_bytes, or the cursor cannot use the index")
-                .containsExactly("STATUS", "PURGED_AT", "CREATED_AT", "SIZE_BYTES");
+                .as("id must sit right after created_at: InnoDB appends the primary key "
+                        + "after every declared column, so leaving it implicit would order "
+                        + "ties by size_bytes instead of by id")
+                .containsExactly("STATUS", "PURGED_AT", "CREATED_AT", "ID", "SIZE_BYTES");
     }
 }

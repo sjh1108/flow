@@ -89,11 +89,13 @@ services:
       migrate:
         condition: service_completed_successfully
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      # MYSQL_PWD rather than -p on the command line: the client reads it from
+      # the environment, so the password never appears in the container's argv.
+      MYSQL_PWD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
     volumes:
       - ./grants.sql:/grants.sql:ro
     command: >
-      sh -c 'mysql -h mysql -uroot -p"$$MYSQL_ROOT_PASSWORD" < /grants.sql'
+      sh -c 'mysql -h mysql -uroot < /grants.sql'
 
   # Stage 3 of 3: the application. Holds one account, its own.
   app:

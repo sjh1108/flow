@@ -81,7 +81,7 @@
 | 4-1 | 새로고침 / 동시 편집 정합성 | UNIQUE 인덱스가 최종 보증, 모든 변경 응답이 최신 스냅샷 반환 | `PolicyApiIntegrationTest#rejectsDuplicates`, `#fixedToggleIsPersisted` |
 | 4-2 | 로그 / 모니터링 | `policy_audit_log`, `upload_record`(승인·거부 모두), WARN/INFO 로그, `/actuator/health` | `docs/01-decisions.md` 4-2 |
 | 4-3 | 저장소 고갈 방어 | 쿼터 10GB + 디스크 최소 여유 1GB, 보존 30일 정리, 고아·부분 파일 정리 (`StorageBudget`, `StorageMaintenanceService`, `LocalFileStorage`) | `StorageQuotaIntegrationTest`, `StorageMaintenanceIntegrationTest`, **`StorageMaintenanceFailureIntegrationTest`**(삭제 실패 시 재시도), `LocalFileStorageTest` |
-| 4-4 | DB 권한 분리 실효화 | 마이그레이션을 별도 one-shot 컨테이너로 분리해 앱이 마이그레이터 자격증명을 갖지 않게 함. 권한 축소(`deploy/grants.sql`)를 `grants` 컨테이너가 매 배포마다 적용 (`deploy/docker-compose.yml`, `application-migrate.yml`, `SchedulingConfig`) | `MigrateProfileTest`<br>`SchemaMigrationTest#liveUsageIndexAlsoOrdersThePurgeCursor`<br>`docker compose config`로 자격증명 분리 확인 (`docs/01-decisions.md` 4-4) |
+| 4-4 | DB 권한 분리 실효화 | 마이그레이션을 별도 one-shot 컨테이너로 분리해 앱이 마이그레이터 자격증명을 갖지 않게 함. 권한 축소(`deploy/grants.sql`)를 `grants` 컨테이너가 매 배포마다 적용 (`deploy/docker-compose.yml`, `application-migrate.yml`, `SchedulingConfig`) | **`scripts/verify-grants.sh`** (실제 MySQL 8.4에서 앱 계정의 허용·거부를 둘 다 실행, CI job)<br>`MigrateProfileTest`<br>`SchemaMigrationTest#liveUsageIndexAlsoOrdersThePurgeCursor` |
 | 4-5 | 향후 확장 (사용자별 정책 / 화이트리스트) | 확장 지점 문서화 | `docs/01-decisions.md` 4-5 |
 
 ---
@@ -97,3 +97,7 @@
 | 백엔드 단위·통합 테스트 | **194** | `cd backend && ./gradlew test` |
 | API 엔드투엔드 (curl) | **38** | `scripts/verify.sh` |
 | 브라우저 (Playwright + Chromium) | **23** | `docs/04-deployment.md` 참조 |
+| DB 권한 경계 (실제 MySQL 8.4) | **21** | `scripts/verify-grants.sh` — Docker 필요 |
+
+> 마지막 계층은 H2로는 표현할 수 없는 것만 봅니다. 테이블·컬럼 단위 권한과 컨테이너별
+> 자격증명 분리는 MySQL 고유 동작이라, 앞의 세 계층을 아무리 늘려도 닿지 않습니다.

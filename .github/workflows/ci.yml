@@ -112,3 +112,28 @@ jobs:
           name: test-report
           path: backend/build/reports/tests/test
           if-no-files-found: ignore
+
+  # The job above runs against H2, which has no concept of table- or
+  # column-level grants. Everything this project claims about privilege
+  # separation is therefore invisible to it: that the application account cannot
+  # INSERT into fixed_extension_state, that the application container holds no
+  # migrator credentials, that the one-shot containers actually exit. Those were
+  # checked by hand, or not at all -- the deployment change that introduced them
+  # shipped with "could not verify, no Docker daemon" written in the PR body.
+  #
+  # The runner has Docker. This job brings the real stack up on MySQL 8.4 and
+  # makes the boundary an assertion instead of a claim.
+  #
+  # Separate job so the fast feedback above is not held behind an image build.
+  grants:
+    name: Database privilege boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The script dumps container state and logs itself when a check fails;
+      # doing it from a later step would find the stack already torn down.
+      - name: Privilege boundary checks
+        run: scripts/verify-grants.sh

@@ -32,10 +32,20 @@
 --
 -- Creating those rows is the migration account's job alone.
 
--- Cleanup for databases provisioned before the application account stopped
--- being given database-wide rights. IF EXISTS because on a fresh deployment
--- there is nothing to revoke and a plain REVOKE would fail the run.
-REVOKE IF EXISTS ALL PRIVILEGES ON extguard.* FROM 'extguard_app'@'%';
+-- Empty the account completely, then grant back the list below. The file is
+-- meant to leave the account at exactly this allowlist on every deployment, and
+-- that only works if it can remove privileges it did not grant.
+--
+-- The form matters. `REVOKE ALL PRIVILEGES ON extguard.* FROM ...` touches only
+-- the database level (mysql.db); table privileges live in mysql.tables_priv and
+-- column privileges in mysql.columns_priv, and it leaves both alone. Dropping a
+-- GRANT from this file would then not remove it from a database that already
+-- had it -- as happened with flyway_schema_history, which this file stopped
+-- granting while every existing deployment kept the privilege.
+--
+-- Without the ON clause, the statement revokes at every level, which is what
+-- "re-converge on the allowlist" requires.
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'extguard_app'@'%';
 
 -- Fixed extensions: read and toggle only. No INSERT. No DELETE.
 GRANT SELECT, UPDATE ON extguard.fixed_extension_state TO 'extguard_app'@'%';
