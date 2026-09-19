@@ -47,6 +47,12 @@ public enum ApiErrorCode {
     CONTENT_TYPE_MISMATCH(HttpStatus.UNPROCESSABLE_CONTENT,
             "파일 내용이 '%s' 확장자와 일치하지 않습니다."),
 
+    // Refused for capacity, not for anything wrong with the file. 507 rather
+    // than 422 so a client can tell "this file is unacceptable" from "try again
+    // later"; the other per-file rejections above are permanent for that file.
+    STORAGE_QUOTA_EXCEEDED(HttpStatus.INSUFFICIENT_STORAGE,
+            "저장 공간이 부족하여 업로드할 수 없습니다. 잠시 후 다시 시도해 주세요."),
+
     // --- infrastructure ------------------------------------------------------
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "관리자 토큰이 필요합니다."),
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "요청 값이 올바르지 않습니다."),

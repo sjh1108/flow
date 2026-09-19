@@ -46,8 +46,7 @@ public class FileUploadController {
             @RequestParam(value = "files", required = false) List<MultipartFile> files,
             HttpServletRequest request) {
         UploadResponse response = uploadService.upload(files, RequestActors.clientIp(request));
-        HttpStatus status = response.allRejected() ? HttpStatus.UNPROCESSABLE_CONTENT : HttpStatus.OK;
-        return ResponseEntity.status(status).body(response);
+        return ResponseEntity.status(response.status()).body(response);
     }
 
     @GetMapping

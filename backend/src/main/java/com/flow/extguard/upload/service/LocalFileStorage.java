@@ -4,19 +4,25 @@ import com.flow.extguard.config.StorageProperties;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,12 +39,22 @@ import org.springframework.stereotype.Component;
  *   <li>Nothing is ever served back out. Handing an uploaded file to a browser is
  *       where the real danger lies, so this class has no read method.
  * </ul>
+ *
+ * <p><strong>A failed write leaves nothing behind.</strong> Content goes to a
+ * {@code .part} file that is moved into place only once it is complete, so a
+ * name ending in {@code .bin} always denotes a whole file. An earlier version
+ * wrote straight to the final name: a write that died partway -- a full disk
+ * above all -- left a half file that no record pointed at, precisely when the
+ * disk could least afford it.
  */
 @Component
 public class LocalFileStorage implements FileStorage {
 
     private static final Logger log = LoggerFactory.getLogger(LocalFileStorage.class);
     private static final DateTimeFormatter DATE_PATH = DateTimeFormatter.ofPattern("yyyy/MM/dd");
+
+    static final String SUFFIX = ".bin";
+    static final String PART_SUFFIX = ".part";
 
     private static final Set<PosixFilePermission> FILE_PERMISSIONS =
             PosixFilePermissions.fromString("rw-------");
@@ -57,18 +73,27 @@ public class LocalFileStorage implements FileStorage {
         Path directory = root.resolve(LocalDate.now().format(DATE_PATH));
         createDirectories(directory);
 
-        Path target = directory.resolve(UUID.randomUUID() + ".bin");
+        Path target = directory.resolve(UUID.randomUUID() + SUFFIX);
+        Path partial = directory.resolve(target.getFileName() + PART_SUFFIX);
         String relativeName = root.relativize(target).toString().replace('\\', '/');
+
+        // Created with its permissions already restricted. Setting them after the
+        // write would leave the file readable under the default umask for as long
+        // as the upload takes.
+        createRestricted(partial);
 
         MessageDigest digest = newSha256();
         long written;
         try (DigestInputStream digesting = new DigestInputStream(content, digest);
-             OutputStream out = Files.newOutputStream(target,
-                     StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+             OutputStream out = Files.newOutputStream(partial, StandardOpenOption.WRITE)) {
             written = digesting.transferTo(out);
+        } catch (IOException | RuntimeException e) {
+            deleteQuietly(partial);
+            throw e;
         }
 
-        restrictPermissions(target);
+        // Only now does the file take a name the rest of the system recognises.
+        Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE);
         return new StoredFile(relativeName, written, HexFormat.of().formatHex(digest.digest()));
     }
 
@@ -90,6 +115,90 @@ public class LocalFileStorage implements FileStorage {
         }
     }
 
+    @Override
+    public List<String> listStoredNamesModifiedBefore(Instant cutoff) throws IOException {
+        if (!Files.isDirectory(root)) {
+            return List.of();
+        }
+        try (Stream<Path> files = Files.walk(root, FileVisitOption.FOLLOW_LINKS)) {
+            return files
+                    .filter(path -> path.getFileName().toString().endsWith(SUFFIX))
+                    .filter(path -> modifiedBefore(path, cutoff))
+                    .map(path -> root.relativize(path).toString().replace('\\', '/'))
+                    .toList();
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+    }
+
+    @Override
+    public int deleteStaleTempFiles(Instant cutoff) throws IOException {
+        if (!Files.isDirectory(root)) {
+            return 0;
+        }
+        List<Path> stale;
+        try (Stream<Path> files = Files.walk(root, FileVisitOption.FOLLOW_LINKS)) {
+            stale = files
+                    .filter(path -> path.getFileName().toString().endsWith(PART_SUFFIX))
+                    .filter(path -> modifiedBefore(path, cutoff))
+                    .toList();
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        }
+        int deleted = 0;
+        for (Path path : stale) {
+            if (deleteQuietly(path)) {
+                deleted++;
+            }
+        }
+        return deleted;
+    }
+
+    @Override
+    public long usableSpaceBytes() {
+        try {
+            // The root may not exist yet on a fresh deployment; the enclosing
+            // filesystem is what the number is about either way.
+            Path existing = root;
+            while (existing != null && !Files.exists(existing)) {
+                existing = existing.getParent();
+            }
+            return existing == null ? Long.MAX_VALUE : Files.getFileStore(existing).getUsableSpace();
+        } catch (IOException e) {
+            // Refusing every upload because the free-space probe failed would be
+            // worse than the risk it guards against. The quota still applies.
+            log.warn("Could not read free space for {}; skipping the disk check", root, e);
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private static boolean modifiedBefore(Path path, Instant cutoff) {
+        try {
+            return Files.getLastModifiedTime(path).toInstant().isBefore(cutoff);
+        } catch (IOException e) {
+            // Deleted underneath us, or unreadable. Either way, leave it alone.
+            return false;
+        }
+    }
+
+    private boolean deleteQuietly(Path path) {
+        try {
+            return Files.deleteIfExists(path);
+        } catch (IOException e) {
+            log.error("Failed to delete '{}'", path, e);
+            return false;
+        }
+    }
+
+    private void createRestricted(Path file) throws IOException {
+        try {
+            Files.createFile(file, PosixFilePermissions.asFileAttribute(FILE_PERMISSIONS));
+        } catch (UnsupportedOperationException e) {
+            // Non-POSIX filesystem; fall back without explicit permissions.
+            Files.createFile(file);
+        }
+    }
+
     private void createDirectories(Path directory) throws IOException {
         if (Files.exists(directory)) {
             return;
@@ -100,14 +209,6 @@ public class LocalFileStorage implements FileStorage {
         } catch (UnsupportedOperationException e) {
             // Non-POSIX filesystem; fall back without explicit permissions.
             Files.createDirectories(directory);
-        }
-    }
-
-    private void restrictPermissions(Path target) {
-        try {
-            Files.setPosixFilePermissions(target, FILE_PERMISSIONS);
-        } catch (UnsupportedOperationException | IOException e) {
-            log.debug("Could not set POSIX permissions on {}", target, e);
         }
     }
 

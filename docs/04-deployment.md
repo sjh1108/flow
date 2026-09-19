@@ -196,9 +196,15 @@ node scripts/ui-verify.mjs      # FRONTEND/API 환경변수로 주소 지정 가
 | `EXTGUARD_ADMIN_TOKEN` | *(빈 값)* | 정책 쓰기 토큰. **비우면 인증이 비활성화되고 시작 시 WARN** |
 | `CORS_ALLOWED_ORIGINS` | `localhost:5173,3000` | 쉼표 구분. Vercel 도메인 필수 |
 | `STORAGE_ROOT` | `/var/lib/extguard/files` | 업로드 저장 루트. 웹 루트 밖이어야 함 |
+| `STORAGE_QUOTA` | `10GB` | 살아 있는 업로드 총량 상한. 초과하면 새 업로드를 **507**로 거부 |
+| `STORAGE_MIN_FREE_SPACE` | `1GB` | 파일시스템에 남겨둘 최소 여유. 쿼터와 **별개로** 검사 |
+| `STORAGE_RETENTION` | `30d` | 이 기간이 지난 **파일** 삭제. `upload_record` 행은 남고 `purged_at`이 채워짐 |
+| `STORAGE_CLEANUP_CRON` | `0 30 3 * * *` | 정리 작업 실행 시각 (Spring 6필드 cron) |
 | `SERVER_PORT` | `8080` | |
 
 애플리케이션 설정(`extguard.*`)은 `backend/src/main/resources/application.yml` 참조.
+
+> **쿼터를 늘릴 때**는 디스크 실제 용량도 함께 확인하세요. 두 한도는 독립이며, 쿼터에 여유가 있어도 `STORAGE_MIN_FREE_SPACE` 아래로 내려가면 업로드가 거부됩니다. 의도된 동작입니다 — 앱 쿼터는 이 애플리케이션의 예산일 뿐 같은 디스크를 쓰는 다른 것에 대해 아무것도 모릅니다.
 
 ---
 
@@ -220,7 +226,26 @@ docker compose exec mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" extguard \
 
 # 디스크 사용량
 docker compose exec app du -sh /var/lib/extguard/files
+
+# 쿼터 기준 사용량 (정리되지 않은 업로드의 합계)
+docker compose exec mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" extguard \
+  -e "SELECT COALESCE(SUM(size_bytes),0) FROM upload_record
+      WHERE status='ACCEPTED' AND purged_at IS NULL;"
+
+# 정리 작업이 돌고 있는지
+docker compose logs app | grep "Storage maintenance finished"
 ```
+
+### 저장소 정리
+
+매일 `STORAGE_CLEANUP_CRON` 시각에 두 가지를 실행합니다.
+
+1. **보존 만료** — `STORAGE_RETENTION`이 지난 파일을 지우고 행에 `purged_at`을 기록
+2. **고아 정리** — DB에 없는 파일과 버려진 `.part` 제거. 24시간 유예를 두어 **진행 중인 업로드는 건드리지 않습니다**
+
+양쪽 모두 멱등이라 중단돼도 다음 회차가 이어받습니다. 즉시 돌려야 하면 `STORAGE_CLEANUP_CRON`을 짧게 주고 재기동하세요.
+
+> 업로드가 507로 거부되기 시작하면 위 사용량 쿼리부터 확인하세요. 합계가 쿼터에 닿았으면 쿼터를 늘리거나 보존 기간을 줄이고, 합계는 여유가 있는데 거부된다면 **디스크 쪽**입니다(`df -h`).
 
 ### 백업
 

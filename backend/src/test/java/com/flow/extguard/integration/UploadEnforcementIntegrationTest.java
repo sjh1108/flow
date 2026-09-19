@@ -24,9 +24,6 @@ import org.springframework.mock.web.MockMultipartFile;
  */
 class UploadEnforcementIntegrationTest extends IntegrationTestBase {
 
-    @Autowired
-    private StorageProperties storageProperties;
-
     private static final byte[] TEXT = "hello, world".getBytes(StandardCharsets.UTF_8);
     private static final byte[] PE_BYTES = new byte[]{0x4D, 0x5A, (byte) 0x90, 0x00, 0x03};
 
@@ -186,7 +183,7 @@ class UploadEnforcementIntegrationTest extends IntegrationTestBase {
                 "SELECT stored_name FROM upload_record WHERE status = 'ACCEPTED'", String.class);
         assertThat(storedName).isNotNull().endsWith(".bin").doesNotContain("notes");
 
-        Path onDisk = Path.of(storageProperties.getRoot()).resolve(storedName);
+        Path onDisk = storageRoot().resolve(storedName);
         assertThat(Files.exists(onDisk)).as("file is on disk at %s", onDisk).isTrue();
         assertThat(Files.readAllBytes(onDisk)).isEqualTo(TEXT);
     }

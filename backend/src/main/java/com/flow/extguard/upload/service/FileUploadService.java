@@ -20,6 +20,7 @@ import java.io.InputStream;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,14 +72,20 @@ public class FileUploadService {
         // and still fresh enough that a policy change takes effect immediately.
         Set<String> blockedExtensions = policyService.blockedExtensions();
 
+        // Likewise measured once and then decremented locally, so ten files in
+        // one request cannot each spend the same remaining headroom.
+        StorageBudget budget = StorageBudget.of(
+                recordRepository.sumLiveBytes(), storage.usableSpaceBytes(), storageProperties);
+
         List<UploadResultDto> results = new ArrayList<>(files.size());
         for (MultipartFile file : files) {
-            results.add(process(file, blockedExtensions, clientIp));
+            results.add(process(file, blockedExtensions, budget, clientIp));
         }
         return UploadResponse.of(results);
     }
 
-    private UploadResultDto process(MultipartFile file, Set<String> blockedExtensions, String clientIp) {
+    private UploadResultDto process(MultipartFile file, Set<String> blockedExtensions,
+                                    StorageBudget budget, String clientIp) {
         String filename = file.getOriginalFilename();
 
         byte[] header;
@@ -110,6 +117,27 @@ public class FileUploadService {
                     file.getSize(), null, signatureId(verdict));
         }
 
+        // The file is acceptable; the question now is whether there is room for
+        // it. Checked before the write rather than after a failed one, so a full
+        // store is a clean refusal with a reason instead of a broken write.
+        Optional<String> shortfall = budget.shortfall(file.getSize());
+        if (shortfall.isPresent()) {
+            UploadRecord saved = recordRepository.save(baseRecord(filename, verdict, candidate, clientIp)
+                    .status(UploadStatus.REJECTED)
+                    .rejectionCode(ApiErrorCode.STORAGE_QUOTA_EXCEEDED.name())
+                    .rejectionDetail(shortfall.get())
+                    .sizeBytes(file.getSize())
+                    .build());
+
+            log.warn("Refused upload '{}' for capacity: {}", filename, shortfall.get());
+
+            return new UploadResultDto(
+                    displayName(verdict, filename), "REJECTED",
+                    ApiErrorCode.STORAGE_QUOTA_EXCEEDED.name(),
+                    ApiErrorCode.STORAGE_QUOTA_EXCEEDED.message(), shortfall.get(), saved.getId(),
+                    file.getSize(), null, signatureId(verdict));
+        }
+
         StoredFile stored;
         try (InputStream content = file.getInputStream()) {
             stored = storage.store(content);
@@ -136,6 +164,7 @@ public class FileUploadService {
             throw new ApiException(ApiErrorCode.STORAGE_FAILURE, "업로드 기록 저장에 실패했습니다.");
         }
 
+        budget.charge(stored.sizeBytes());
         log.info("Accepted upload '{}' as {} ({} bytes)", filename, stored.storedName(), stored.sizeBytes());
 
         return new UploadResultDto(

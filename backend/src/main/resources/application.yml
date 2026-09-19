@@ -41,6 +41,15 @@ extguard:
     root: ${STORAGE_ROOT:/var/lib/extguard/files}
     max-file-size: 20MB
     max-files-per-request: 10
+    # Ceilings. The quota is this application's own budget; min-free-space
+    # guards the disk itself, which the quota knows nothing about.
+    quota: ${STORAGE_QUOTA:10GB}
+    min-free-space: ${STORAGE_MIN_FREE_SPACE:1GB}
+    # Reclaim. Files older than the retention period are deleted; their
+    # upload_record rows stay and are marked purged.
+    retention: ${STORAGE_RETENTION:30d}
+    orphan-grace-period: 24h
+    cleanup-cron: ${STORAGE_CLEANUP_CRON:0 30 3 * * *}
   policy:
     max-custom-extensions: 200
     max-extension-length: 20

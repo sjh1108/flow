@@ -67,4 +67,22 @@ class SchemaMigrationTest {
                         + "VALUES ('sh', FALSE, CURRENT_TIMESTAMP(6))"))
                 .isInstanceOf(Exception.class);
     }
+
+    /**
+     * V3 adds the retention marker. It has to be nullable: every row starts life
+     * with its file on disk, and a NOT NULL column would need a sentinel value
+     * standing in for "not purged".
+     */
+    @Test
+    void uploadRecordCarriesANullableRetentionMarker() {
+        jdbc().update("INSERT INTO upload_record "
+                + "(original_filename, display_filename, size_bytes, status, created_at) "
+                + "VALUES ('a.txt', 'a.txt', 1, 'ACCEPTED', CURRENT_TIMESTAMP(6))");
+
+        Integer unpurged = jdbc().queryForObject(
+                "SELECT COUNT(*) FROM upload_record WHERE purged_at IS NULL", Integer.class);
+
+        assertThat(unpurged).isEqualTo(1);
+        jdbc().update("DELETE FROM upload_record");
+    }
 }
