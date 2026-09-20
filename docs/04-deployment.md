@@ -180,7 +180,7 @@ ADMIN_TOKEN=<토큰> ../scripts/verify.sh https://api.example.com
 
 > API 주소를 빌드 시 상수가 아니라 `<meta>` 태그에서 읽는 이유는, 같은 정적 번들을 빌드 파이프라인 없이 배포하기 위해서입니다. 환경을 바꾸려면 이 한 줄을 고쳐 커밋합니다.
 >
-> 그래서 로컬에서 이 파일을 그대로 열면 **브라우저가 운영 API로 갑니다.** `scripts/ui-verify.mjs`는 이 태그를 자기가 겨냥한 주소(`API` 환경변수, 기본 `localhost:8080`)로 고쳐 쓴 뒤 검사하므로 로컬 검증은 영향을 받지 않습니다. 근거는 [`01-decisions.md`](01-decisions.md) 4-6.
+> 그래서 **로컬에서 연 페이지는 이 태그를 무시합니다.** `localhost:8080`을 쓰거나, `?api=`가 지정한 주소를 씁니다. 그러지 않으면 README 빠른 시작대로 로컬 백엔드를 띄워도 브라우저는 운영 API를 부릅니다. 이 덮어쓰기는 로컬에서 연 페이지에만 적용됩니다 — 배포된 페이지에서 허용하면 `?api=`를 실은 링크가 관리자 토큰을 남의 주소로 보내게 됩니다. 근거는 [`01-decisions.md`](01-decisions.md) 4-6.
 
 4. `frontend/vercel.json`의 CSP `connect-src`에 API 도메인을 넣습니다. 여기가 비어 있으면 브라우저가 API 호출을 차단합니다.
 

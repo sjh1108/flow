@@ -43,6 +43,14 @@ cd frontend && python3 -m http.server 8081
 
 http://localhost:8081 을 엽니다.
 
+> `index.html`의 `api-base` 태그에는 **배포된 API 주소**가 들어 있습니다. Vercel이 빌드 단계
+> 없이 이 파일을 그대로 내기 때문입니다. 그래서 **로컬에서 연 페이지는 그 태그를 무시하고**
+> `http://localhost:8080`을 씁니다 — 위에서 띄운 백엔드입니다. 그러지 않으면 로컬 백엔드를
+> 띄워 두고 브라우저는 운영 API를 부르게 됩니다.
+>
+> 다른 주소를 쓰려면 `?api=`를 붙입니다. 예: http://localhost:8081/?api=http://localhost:9000
+> 이 덮어쓰기는 **로컬에서 연 페이지에만** 적용됩니다(`frontend/src/config.js` 참고).
+
 직접 해볼 것: `.exe` 파일을 업로드해 성공하는지 보고 → `exe` 체크박스를 켠 뒤 → 같은 파일을 다시 올려보세요.
 
 ## 검증

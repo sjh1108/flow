@@ -11,6 +11,10 @@
     Nothing rewrites this automatically: it is edited by hand before deploying,
     and the CSP connect-src in vercel.json has to name the same origin or the
     browser blocks every call. See docs/04-deployment.md section 2.
+
+    A locally served page ignores this tag and uses localhost:8080, or whatever
+    `?api=` names, so the README quick start reaches the backend it just told
+    you to start. config.js explains why the override stops at local pages.
   -->
   <meta name="api-base" content="https://api.algoj.duckdns.org">
 
