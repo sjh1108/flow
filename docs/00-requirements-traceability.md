@@ -97,7 +97,7 @@
 | 백엔드 단위·통합 테스트 | **194** | `cd backend && ./gradlew test` |
 | API 엔드투엔드 (curl) | **38** | `scripts/verify.sh` |
 | 브라우저 (Playwright + Chromium) | **23** | `docs/04-deployment.md` 참조 |
-| DB 권한 경계 (실제 MySQL 8.4) | **31** | `scripts/verify-grants.sh` — Docker 필요 |
+| DB 권한 경계 (실제 MySQL 8.4) | **31** | `scripts/verify-grants.sh` — Docker 필요. **배포 기계에서는 금지**(`down -v`로 끝납니다) |
 
 > 마지막 계층은 H2로는 표현할 수 없는 것만 봅니다. 테이블·컬럼 단위 권한과 컨테이너별
 > 자격증명 분리는 MySQL 고유 동작이라, 앞의 세 계층을 아무리 늘려도 닿지 않습니다.

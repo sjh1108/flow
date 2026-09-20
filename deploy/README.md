@@ -140,8 +140,14 @@ openssl rand -hex 32
 
 ## 권한 경계 검증
 
+> **이 스택을 서비스 중인 기계에서 돌리지 마세요.** 이 스크립트는 같은
+> `deploy/docker-compose.yml`을 쓰고 프로젝트 이름이 `extguard`로 고정돼 있으며, 끝나면
+> `down -v`를 합니다. 배포된 기계에서는 그게 **돌고 있는 스택과 `mysql-data`·`uploads`
+> 볼륨**입니다. 스크립트가 흔적을 발견하면 거부하지만, 애초에 배포 기계에서 돌릴 이유가
+> 없습니다 — 권한 경계는 CI가 매 커밋 검증합니다.
+
 ```bash
-scripts/verify-grants.sh      # Docker 필요
+scripts/verify-grants.sh      # Docker 필요. 개발 기계나 CI에서만
 ```
 
 compose 스택을 실제 MySQL 8.4로 띄우고 `extguard_app`으로 **할 수 있어야 하는 문과 할 수

@@ -14,6 +14,12 @@
 #   scripts/verify-grants.sh
 #
 # Needs Docker. Brings the deploy stack up and tears it down again.
+#
+# NOT FOR A MACHINE THAT RUNS THIS STACK. It uses deploy/docker-compose.yml,
+# whose project name is fixed to `extguard`, and its cleanup is `down -v` -- on
+# a deployment box that is the running stack plus its mysql-data and uploads
+# volumes, deleted. The guard below refuses rather than trusting anyone to
+# remember this.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -47,6 +53,26 @@ API_DOMAIN=localhost
 ENV
 
 compose() { docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.yml "$@"; }
+
+# Refuse to run where this stack already lives. `down -v` in cleanup() does not
+# distinguish a stack this script created from one somebody is serving traffic
+# from: both are project `extguard`, and both lose their volumes. A CI runner
+# has neither container nor volume, so this never fires there.
+existing_containers=$(docker compose -f deploy/docker-compose.yml ps -aq 2>/dev/null | wc -l)
+existing_volume=$(docker volume ls -q --filter name='^extguard_mysql-data$' 2>/dev/null | wc -l)
+if [ "$existing_containers" -gt 0 ] || [ "$existing_volume" -gt 0 ]; then
+  echo "이 기계에 extguard 스택의 흔적이 있습니다:" >&2
+  [ "$existing_containers" -gt 0 ] && echo "  컨테이너 ${existing_containers}개" >&2
+  [ "$existing_volume" -gt 0 ] && echo "  볼륨 extguard_mysql-data" >&2
+  echo >&2
+  echo "이 스크립트는 끝나면 'down -v'를 합니다. 그대로 두면 위의 것들이" >&2
+  echo "지워집니다 -- 배포된 스택이라면 데이터베이스와 업로드 파일까지." >&2
+  echo "권한 경계는 CI가 매 커밋 검증하므로 배포 기계에서 돌릴 이유가 없습니다." >&2
+  echo >&2
+  echo "버려도 되는 것이 확실하면: VERIFY_GRANTS_FORCE=1 scripts/verify-grants.sh" >&2
+  [ "${VERIFY_GRANTS_FORCE:-}" = "1" ] || exit 1
+  echo "VERIFY_GRANTS_FORCE=1 -- 계속합니다." >&2
+fi
 
 cleanup() {
   compose down -v --remove-orphans >/dev/null 2>&1 || true
