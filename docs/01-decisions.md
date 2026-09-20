@@ -721,6 +721,13 @@ init 디렉터리에서 실제로 실행되는지, `SHOW GRANTS` 결과까지.
 사유가 권한 때문인지도 함께 확인합니다 — 오타나 테이블 누락으로 인한 실패를 "경계가
 지켜졌다"로 읽으면 테스트가 잘못된 이유로 통과합니다.
 
+#### 4-5. 향후 확장
+
+- **사용자별 정책**: `fixed_extension_state`/`custom_extension`에 `owner_id`를 추가하고 UNIQUE를 `(owner_id, extension)`으로 변경. 감사 로그의 `actor`는 이미 사용자 ID를 받을 수 있는 형태.
+- **화이트리스트 전환**: `UploadValidator`의 R4만 "체인이 허용 목록에 포함되는가"로 뒤집으면 됩니다. 정책 저장 구조는 그대로 재사용 가능. 커스텀 200개 한도에 도달하는 것이 전환을 검토할 신호입니다.
+- **바이러스 스캔**: `UploadValidator` 뒤에 R8로 추가하는 자리가 이미 열려 있습니다(파일 저장 전).
+- **다운로드**: 추가한다면 `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` + 별도 도메인이 전제 조건입니다.
+
 #### 4-6. 배포 대상 주소 — 어디에 적고, 검증은 어떻게 그것을 피하는가
 
 **호스트 포트는 설정값입니다.** compose는 앱을 `127.0.0.1:${APP_HOST_PORT:-8080}`에
@@ -797,10 +804,3 @@ HandlerMapping**이 적용합니다. `AdminTokenFilter`는 그보다 앞단에�
 헤더를 단언하고(`AdminTokenIntegrationTest#unauthorizedResponseCarriesCorsHeader`),
 브라우저 검증에는 토큰 없는 컨텍스트로 토글하는 7절을 두었습니다. 둘 다 **옛 설정으로
 되돌리면 실패하는 것을 확인**했습니다. 그 확인이 없으면 단언이 무엇을 재는지 알 수 없습니다.
-
-#### 4-5. 향후 확장
-
-- **사용자별 정책**: `fixed_extension_state`/`custom_extension`에 `owner_id`를 추가하고 UNIQUE를 `(owner_id, extension)`으로 변경. 감사 로그의 `actor`는 이미 사용자 ID를 받을 수 있는 형태.
-- **화이트리스트 전환**: `UploadValidator`의 R4만 "체인이 허용 목록에 포함되는가"로 뒤집으면 됩니다. 정책 저장 구조는 그대로 재사용 가능. 커스텀 200개 한도에 도달하는 것이 전환을 검토할 신호입니다.
-- **바이러스 스캔**: `UploadValidator` 뒤에 R8로 추가하는 자리가 이미 열려 있습니다(파일 저장 전).
-- **다운로드**: 추가한다면 `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` + 별도 도메인이 전제 조건입니다.

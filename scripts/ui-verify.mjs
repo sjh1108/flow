@@ -61,6 +61,30 @@ async function resetPolicy() {
   }
 }
 
+/**
+ * Fail here, not twenty assertions later.
+ *
+ * With the server's guard on and no token in hand, the first write 401s and the
+ * run dies at a selector timeout that says nothing about tokens. The one case
+ * this script exists to cover -- section 7 -- is never even reached. So probe a
+ * write up front and say what to run instead.
+ */
+async function requireMatchingToken() {
+  const probe = await fetch(`${API}/custom/__probe__`, { method: 'DELETE', headers: adminHeaders });
+  if (probe.status !== 401) return;
+
+  console.error(
+    TOKEN
+      ? '\n  ADMIN_TOKEN이 서버의 EXTGUARD_ADMIN_TOKEN과 다릅니다.'
+      : '\n  서버에 관리자 가드가 켜져 있는데 ADMIN_TOKEN이 없습니다.');
+  console.error('  둘을 같은 값으로 맞춰 돌리세요:\n');
+  console.error("    cd backend && EXTGUARD_ADMIN_TOKEN=test-secret \\");
+  console.error("      ./gradlew bootRun --args='--spring.profiles.active=dev'");
+  console.error('    ADMIN_TOKEN=test-secret node scripts/ui-verify.mjs\n');
+  process.exit(1);
+}
+
+await requireMatchingToken();
 await resetPolicy();
 
 const browser = await chromium.launch({
@@ -265,7 +289,10 @@ if (TOKEN) {
   await anonContext.close();
 } else {
   check('토큰 없이 토글하면 권한 안내가 뜸', false,
-    'ADMIN_TOKEN 미설정 — 서버의 가드가 꺼져 있어 이 경우를 잴 수 없습니다');
+    'ADMIN_TOKEN 미설정 — 서버 가드가 꺼져 있으면 401 경로가 없어 잴 것이 없습니다. '
+    + '가드를 켠 서버에 같은 토큰으로 돌리세요: '
+    + 'EXTGUARD_ADMIN_TOKEN=test-secret ./gradlew bootRun --args=\'--spring.profiles.active=dev\' / '
+    + 'ADMIN_TOKEN=test-secret node scripts/ui-verify.mjs');
 }
 
 if (process.env.SCREENSHOT) {
