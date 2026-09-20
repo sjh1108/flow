@@ -132,6 +132,7 @@ EXTENSION_BLOCKED
 | [02-tooling.md](docs/02-tooling.md) | 사용한 스킬·MCP·라이브러리와 그 용도 |
 | [03-api.md](docs/03-api.md) | API 레퍼런스 |
 | [04-deployment.md](docs/04-deployment.md) | Vercel + OCI 배포, OCI 함정 포함 |
+| [05-ai-retrospective.md](docs/05-ai-retrospective.md) | AI 결과물을 그대로 쓴 것 / 고쳐 쓴 것 / 버린 것과 그 기준 |
 
 ## 범위 밖
 
