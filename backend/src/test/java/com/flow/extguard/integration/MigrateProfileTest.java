@@ -21,8 +21,11 @@ import org.springframework.test.context.ActiveProfiles;
  *
  * <p>What is pinned here is the context shape. That the process actually
  * terminates is a property of {@code main}, which a {@code @SpringBootTest}
- * never calls -- it builds the context directly. That one is verified by running
- * the jar; see the notes in {@code tasks/todo.md}.
+ * never calls -- it builds the context directly. That one was verified by
+ * running the jar: before the explicit exit it hung to a 45s timeout
+ * ({@code exit=124}), after it the migrate profile ends with {@code exit=0}.
+ * See {@code docs/01-decisions.md}, section 4-4, "종료를 데몬 스레드에 맡기지
+ * 않습니다".
  */
 class MigrateProfileTest {
 
