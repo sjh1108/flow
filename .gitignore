@@ -35,3 +35,7 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Working notes. lessons.md는 지적받은 패턴의 누적 기록이라 추적하고,
+# todo.md는 작업 중에만 의미가 있는 체크리스트라 로컬에만 둔다.
+tasks/todo.md
