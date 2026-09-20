@@ -64,6 +64,11 @@ async function request(path, { method = 'GET', body, admin = false } = {}) {
 export const api = {
   getPolicy: () => request('/api/v1/policy/extensions'),
 
+  // The request-shape limits (how many files, how large each one). Published by
+  // the server so the upload screen states the real numbers instead of literals
+  // that would keep saying 10 and 20MB after the configuration changed.
+  getUploadLimits: () => request('/api/v1/files/limits'),
+
   setFixedBlocked: (extension, blocked) =>
     request(`/api/v1/policy/extensions/fixed/${encodeURIComponent(extension)}`, {
       method: 'PATCH',
@@ -87,7 +92,9 @@ export const api = {
 
 /**
  * Uploads via XMLHttpRequest rather than fetch, because fetch still has no
- * upload progress events and per-file progress is worth the older API.
+ * upload progress events. The progress reported here is the request's, not any
+ * one file's -- every file travels in a single multipart body, so there is no
+ * per-file figure to report and the screen must not draw one.
  *
  * Resolves whenever the body carries per-file verdicts, whatever the status: a
  * rejection is a normal, expected outcome, not a transport failure.

@@ -267,7 +267,7 @@ await page.setInputFiles('#file-input', NOTES_TXT);
 await page.waitForSelector(`${NEWEST_RESULT}.is-rejected`, { timeout: 15000 });
 const overQuota = await page.$(NEWEST_RESULT);
 const readQuota = async (selector) => overQuota.$eval(selector, (e) => e.textContent).catch(() => '');
-check('507도 파일별 판정으로 렌더됨 (전송 실패 아님)',
+check('507도 파일별 판정으로 렌더됨 (요청 단위 실패로 뭉뚱그리지 않음)',
   (await readQuota('.result-status')).includes('차단'),
   await readQuota('.result-status'));
 check('사유가 저장 공간 부족임을 명시', (await readQuota('.result-message')).includes('저장 공간'));
@@ -310,6 +310,109 @@ const reverted = await anonPage.locator('.chip input').first().isChecked();
 check('거절된 토글은 원래 상태로 되돌아감', reverted === false);
 
 await anonContext.close();
+
+/* ------------------------------------------------------------------ *
+ * 8. 요청 단위 오류와 파일 단위 판정
+ *
+ * The screen used to model one batch request as N independent uploads: a
+ * progress bar per row, all fed the same request-level percentage, and on
+ * failure the one error copied onto every row. A user who sent fourteen files
+ * was told that each of them -- including a 68KB answer sheet -- was too large,
+ * when the container had refused the request before reading any file.
+ *
+ * Only a browser can see this. The API answers correctly either way; what was
+ * wrong was which part of the screen the answer was written onto.
+ * ------------------------------------------------------------------ */
+console.log('\n8. 요청 단위 오류와 파일 단위 판정');
+
+const publishedLimits = await (await fetch(`${API_BASE}/api/v1/files/limits`)).json();
+const limitMb = Math.round(publishedLimits.maxFileSizeBytes / 1024 / 1024);
+
+const hintText = (await page.textContent('#dropzone-limits')).trim();
+check(
+  '한도 안내가 서버가 게시한 값으로 렌더',
+  hintText === `한 번에 최대 ${publishedLimits.maxFilesPerRequest}개 · 파일당 최대 ${limitMb}MB`,
+  hintText,
+);
+check('행마다 달려 있던 진행 막대가 없음', (await page.$$('#upload-results .progress')).length === 0);
+
+// 8-1. Over the published count: the request must not be sent at all.
+const overCount = Array.from(
+  { length: publishedLimits.maxFilesPerRequest + 1 },
+  (_, i) => fixture(`batch-${i}.txt`, 'hello, world'),
+);
+
+let uploadPosts = 0;
+const countUploadPosts = (request) => {
+  if (request.method() === 'POST' && request.url().includes('/api/v1/files')) uploadPosts++;
+};
+page.on('request', countUploadPosts);
+
+const rowsBefore = (await page.$$('#upload-results > .result')).length;
+await page.setInputFiles('#file-input', overCount);
+await page.waitForSelector('#upload-error:not([hidden])', { timeout: 15000 });
+
+check('상한을 넘는 선택은 아예 전송되지 않음', uploadPosts === 0, `POST ${uploadPosts}회`);
+check('행을 만들지 않음 (판정된 파일이 없으므로)',
+  (await page.$$('#upload-results > .result')).length === rowsBefore);
+check('배너가 초과 사유를 구체적으로 설명',
+  (await page.textContent('#upload-error-detail'))
+    .includes(`${publishedLimits.maxFilesPerRequest + 1}개를 선택했습니다`),
+  await page.textContent('#upload-error-detail'));
+page.off('request', countUploadPosts);
+
+// 8-2. A request-level refusal from the server: banner once, rows neutral.
+// Stubbed because the real trigger is a 14-file or 30MB request, and what is
+// under test is where the answer lands, not how the server produced it.
+await page.route('**/api/v1/files', async (route) => {
+  if (route.request().method() !== 'POST') return route.continue();
+  await route.fulfill({
+    status: 413,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      code: 'FILE_TOO_LARGE',
+      message: '업로드 요청이 서버 한도를 초과했습니다. 한 번에 최대 10개, 파일당 최대 20MB까지 업로드할 수 있습니다.',
+      detail: '요청이 서버의 multipart 한도(파일당 크기 또는 파트 개수)를 초과해 파일별 검사 전에 거부됐습니다.',
+      timestamp: new Date().toISOString(),
+    }),
+  });
+});
+
+await page.setInputFiles('#file-input', [NOTES_TXT, HELLO_EXE]);
+await page.waitForSelector('#upload-results > .result.is-skipped', { timeout: 15000 });
+
+const batchRows = await page.$$eval('#upload-results > .result', (rows) =>
+  rows.slice(0, 2).map((row) => ({
+    className: row.className,
+    status: row.querySelector('.result-status')?.textContent ?? '',
+    perFileReasons: row.querySelectorAll('.result-message').length,
+  })));
+
+check('두 행 모두 전송되지 않음으로 표시',
+  batchRows.length === 2 && batchRows.every((row) => row.status === '전송되지 않음'),
+  JSON.stringify(batchRows));
+check('행이 차단됨/거부 상태로 물들지 않음',
+  batchRows.every((row) => row.className.includes('is-skipped')),
+  JSON.stringify(batchRows.map((row) => row.className)));
+check('요청 단위 사유가 행에 복사되지 않음',
+  batchRows.every((row) => row.perFileReasons === 0));
+check('사유는 배너 한 곳에만',
+  (await page.textContent('#upload-error-text')).includes('한 번에 최대'),
+  await page.textContent('#upload-error-text'));
+check('배너가 근거와 코드를 함께 보여줌',
+  (await page.textContent('#upload-error-detail')).includes('파일별 검사 전')
+    && (await page.textContent('#upload-error-code')).trim() === 'FILE_TOO_LARGE');
+check('전송이 끝나면 요청 진행 막대가 사라짐',
+  (await page.isVisible('#upload-progress')) === false);
+
+await page.unroute('**/api/v1/files');
+
+// 8-3. The per-file path must still work after all that: a real upload lands
+// as a verdict on its row, and the banner from the failure above goes away.
+await page.setInputFiles('#file-input', NOTES_TXT);
+await page.waitForSelector(`${NEWEST_RESULT}.is-accepted`, { timeout: 15000 });
+check('정상 업로드는 여전히 행별 판정으로 표시', true);
+check('성공하면 요청 단위 배너가 사라짐', (await page.isVisible('#upload-error')) === false);
 
 if (process.env.SCREENSHOT) {
   await page.screenshot({ path: process.env.SCREENSHOT, fullPage: true });

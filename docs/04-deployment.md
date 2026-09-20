@@ -112,7 +112,7 @@ sudo nginx -T 2>/dev/null | grep -n "listen 443\|server_name\|client_max_body_si
 
 `client_max_body_size`가 443 블록에 없으면 거기에 넣고 reload 하세요. 없으면 HTTPS로 오는 큰 업로드만 413으로 잘립니다.
 
-`verify.sh`에는 크기 검사가 없으므로 **이 한도는 38건이 덮지 않습니다.** 앱 한도(20MB) 아래의 파일이 통과하는지 직접 한 번 재는 편이 빠릅니다.
+`verify.sh`가 보내는 파일은 전부 몇 바이트짜리라 **이 한도는 어느 계층도 덮지 않습니다**(6절의 개수 검사는 프록시의 본문 크기와 무관합니다). 앱 한도 아래의 파일이 통과하는지 직접 한 번 재는 편이 빠릅니다 — 한도는 `GET /api/v1/files/limits`가 알려줍니다.
 
 ```bash
 head -c 18000000 /dev/urandom > /tmp/big.txt

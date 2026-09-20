@@ -1,7 +1,9 @@
 package com.flow.extguard.upload.web;
 
 import com.flow.extguard.common.RequestActors;
+import com.flow.extguard.config.StorageProperties;
 import com.flow.extguard.upload.service.FileUploadService;
+import com.flow.extguard.upload.web.dto.UploadLimitsDto;
 import com.flow.extguard.upload.web.dto.UploadRecordDto;
 import com.flow.extguard.upload.web.dto.UploadResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -28,9 +30,24 @@ import org.springframework.web.multipart.MultipartFile;
 public class FileUploadController {
 
     private final FileUploadService uploadService;
+    private final StorageProperties storageProperties;
 
-    public FileUploadController(FileUploadService uploadService) {
+    public FileUploadController(FileUploadService uploadService,
+                                StorageProperties storageProperties) {
         this.uploadService = uploadService;
+        this.storageProperties = storageProperties;
+    }
+
+    /**
+     * The request-shape limits, so the screen can state them and check them
+     * before sending rather than hardcoding numbers that live in configuration.
+     *
+     * <p>Unauthenticated on purpose: it reveals nothing the error responses do
+     * not already say, and the upload screen is open to anyone.
+     */
+    @GetMapping("/limits")
+    public UploadLimitsDto limits() {
+        return UploadLimitsDto.from(storageProperties);
     }
 
     /**

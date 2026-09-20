@@ -100,8 +100,33 @@
                 stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <p class="dropzone-title">파일을 끌어다 놓거나 클릭해서 선택</p>
-        <p class="hint" id="dropzone-limits">한 번에 최대 10개 · 파일당 최대 20MB</p>
+        <!-- Filled from GET /api/v1/files/limits; the numbers are the server's. -->
+        <p class="hint" id="dropzone-limits">업로드 한도를 불러오는 중…</p>
         <input id="file-input" type="file" multiple hidden>
+      </div>
+
+      <!--
+        One request, one progress bar. Selected files travel in a single
+        multipart body, so a bar per row would be the same number drawn N times.
+      -->
+      <div id="upload-progress" class="upload-progress" hidden>
+        <div class="upload-progress-head">
+          <span id="upload-progress-label"></span>
+          <span id="upload-progress-percent">0%</span>
+        </div>
+        <div class="progress"><div id="upload-progress-bar" class="progress-bar"></div></div>
+      </div>
+
+      <!--
+        A failure of the request as a whole belongs here, once -- not copied onto
+        every row, which is how a 68KB file came to be labelled "크기 초과".
+      -->
+      <div id="upload-error" class="banner banner-error" role="alert" hidden>
+        <div class="banner-body">
+          <p id="upload-error-text" class="banner-message"></p>
+          <p id="upload-error-detail" class="banner-detail" hidden></p>
+        </div>
+        <span id="upload-error-code" class="result-code" hidden></span>
       </div>
 
       <ul id="upload-results" class="result-list" aria-label="업로드 결과"></ul>

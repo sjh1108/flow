@@ -328,6 +328,9 @@ input:focus-visible, .btn:focus-visible, .dropzone:focus-visible {
 .result.is-pending { border-left-color: var(--text-muted); }
 .result.is-accepted { border-left-color: var(--success); background: var(--success-bg); }
 .result.is-rejected { border-left-color: var(--danger); background: var(--danger-bg); }
+/* Not judged: the request failed before this file was examined. Deliberately
+   not the rejection colour -- nothing was decided about this file. */
+.result.is-skipped { border-left-color: var(--border); opacity: .72; }
 
 .result-head {
   display: flex;
@@ -373,6 +376,21 @@ input:focus-visible, .btn:focus-visible, .dropzone:focus-visible {
   transition: width .15s linear;
 }
 
+/*
+ * One request, one bar. Sits above the result list rather than inside a row,
+ * because it measures the request and no row owns it.
+ */
+.upload-progress { margin: 16px 0 0; }
+
+.upload-progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: .8rem;
+  color: var(--text-muted);
+}
+
 /* ---------------------------- banners --------------------------- */
 .banner {
   display: flex;
@@ -390,6 +408,12 @@ input:focus-visible, .btn:focus-visible, .dropzone:focus-visible {
   color: var(--danger);
   border: 1px solid currentColor;
 }
+
+/* A request-level failure carries the same three parts a row does: headline,
+   evidence, code. `.banner` is a flex row, so the text stacks in its own box. */
+.banner-body { display: grid; gap: 3px; min-width: 0; }
+.banner-message { margin: 0; font-weight: 600; }
+.banner-detail { margin: 0; font-size: .78rem; opacity: .85; word-break: break-word; }
 
 /* --------------------------- skeleton --------------------------- */
 .skeleton-row {

@@ -18,6 +18,15 @@ ADMIN_TOKEN="${ADMIN_TOKEN:-}"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+# `-F name=@path` is the one argument shape MSYS does not rewrite, so under Git
+# Bash the Windows curl.exe is handed /tmp/... and cannot open it -- every
+# upload comes back 000 while the rest of the script works. Give curl a native
+# path for those arguments only; on Linux and macOS this is the same string.
+UPLOAD_DIR="$WORK_DIR"
+if command -v cygpath > /dev/null 2>&1; then
+  UPLOAD_DIR="$(cygpath -m "$WORK_DIR")"
+fi
+
 PASS=0
 FAIL=0
 
@@ -56,10 +65,24 @@ contains() {
   fi
 }
 
+# excludes <description> <needle> <haystack>
+excludes() {
+  local description="$1" needle="$2" haystack="$3"
+  if [[ "$haystack" != *"$needle"* ]]; then
+    echo "  $(green '✓') $description"
+    PASS=$((PASS + 1))
+  else
+    echo "  $(red '✗') $description"
+    echo "      expected NOT to contain: $needle"
+    echo "      actual:                  ${haystack:0:300}"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
 # upload <filename> -> "<http_status>|<body>"
 upload() {
   curl -sS -o "$WORK_DIR/body" -w '%{http_code}' \
-    -F "files=@$WORK_DIR/$1;filename=$1" \
+    -F "files=@$UPLOAD_DIR/$1;filename=$1" \
     "$BASE_URL/api/v1/files" 2>/dev/null
   echo "|$(cat "$WORK_DIR/body")"
 }
@@ -219,6 +242,51 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' -X PATCH \
   -H 'Content-Type: application/json' "${auth_args[@]}" \
   -d '{"blocked": true}' "$BASE_URL/api/v1/policy/extensions/fixed/sh")
 check "고정 목록에 없는 확장자 토글은 404" "404" "$code"
+
+# ------------------------------------------------ request-shape limits
+#
+# These limits govern the request, not the files in it. The distinction is the
+# whole point of this section: a client that reads a request-level refusal as a
+# per-file verdict ends up telling a user that their 68KB file was too large.
+echo; bold "6. 요청 단위 한도"; echo
+
+limits=$(curl -sS "$BASE_URL/api/v1/files/limits")
+contains "한도 엔드포인트가 파일 개수 상한을 알려줌" '"maxFilesPerRequest"' "$limits"
+contains "한도 엔드포인트가 파일 크기 상한을 알려줌" '"maxFileSizeBytes"' "$limits"
+
+max_files=$(echo "$limits" | grep -o '"maxFilesPerRequest":[0-9]*' | grep -o '[0-9]*$')
+
+# batch <count> -> "<http_status>|<body>", count files in one request
+batch() {
+  local count="$1" args=() i
+  for ((i = 0; i < count; i++)); do
+    printf 'hello, world
+' > "$WORK_DIR/batch-$i.txt"
+    args+=(-F "files=@$UPLOAD_DIR/batch-$i.txt;filename=batch-$i.txt")
+  done
+  curl -sS -o "$WORK_DIR/body" -w '%{http_code}' "${args[@]}" "$BASE_URL/api/v1/files"
+  echo "|$(cat "$WORK_DIR/body")"
+}
+
+result=$(batch "$max_files")
+check "게시된 상한만큼은 한 요청으로 통과" "200" "$(status_of "$result")"
+
+result=$(batch $((max_files + 1)))
+body=$(body_of "$result")
+check "상한보다 1개 많으면 413" "413" "$(status_of "$result")"
+contains "코드가 TOO_MANY_FILES" '"code":"TOO_MANY_FILES"' "$body"
+contains "게시된 상한이 메시지에 그대로 나옴" "최대 ${max_files}개" "$body"
+excludes "요청 단위 거부에는 파일별 판정이 없음" '"results"' "$body"
+
+# Far past the limit, the servlet container refuses the body before the
+# controller counts anything. Which of the two answers comes back depends on
+# where server.tomcat.max-part-count sits, and the client must not care: both
+# are the request's failure, and neither may be pinned on a row.
+result=$(batch $((max_files * 3)))
+body=$(body_of "$result")
+check "상한을 크게 넘겨도 413" "413" "$(status_of "$result")"
+excludes "컨테이너가 끊어도 파일별 판정은 없음" '"results"' "$body"
+contains "어느 쪽이든 지킬 한도를 안내" '최대' "$body"
 
 # ------------------------------------------------------------- cleanup
 set_fixed exe false > /dev/null
