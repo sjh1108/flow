@@ -129,12 +129,24 @@ CHROMIUM=/opt/pw-browsers/chromium node scripts/ui-verify.mjs   # 브라우저
 | DB 마이그레이션 | one-shot 컨테이너로 분리 |
 | CAFEBABE 심화 구조 검증 | 보류 (`.class`/`.dylib` 지원이 실제 요구가 될 때 재검토) |
 
+## 배포 상태
+
+`api.algoj.duckdns.org` (nginx → `127.0.0.1:18080`, Let's Encrypt) + Vercel 프론트로
+운영 중. 배포 절차와 **배포 직후 화면에 관리자 토큰을 넣어야 하는 단계**는
+`docs/04-deployment.md`.
+
 ## 남은 작업 (순서대로, 각각 별도 PR)
 
-1. ~~CI — GitHub Actions~~ (이 PR)
-2. **저장소 고갈 방어** — 쿼터 10GB / 보존 30일 cleanup, 고아 파일 정리,
-   `transferTo()` 실패 시 부분 파일(temp + ATOMIC_MOVE)
-3. **DB 권한 분리 실효화** — one-shot 마이그레이션 컨테이너, 앱 환경변수에서
-   `SPRING_FLYWAY_*` 제거
+1. ~~CI — GitHub Actions~~
+2. ~~저장소 고갈 방어~~ — 쿼터 10GB / 보존 30일 cleanup, 고아 파일 정리, 부분 파일
+3. ~~DB 권한 분리 실효화~~ — one-shot 마이그레이션 컨테이너, `SPRING_FLYWAY_*` 제거
+4. ~~배포 (호스트 포트 설정값화, 실제 도메인)~~
 
-미결 항목: CAFEBABE 심화 구조 검증, OLE 복합 문서 시그니처(`D0CF11E0A1B11AE1`) 추가.
+계획된 작업은 이것으로 끝났다.
+
+미결 항목: CAFEBABE 심화 구조 검증, OLE 복합 문서 시그니처(`D0CF11E0A1B11AE1`) 추가,
+`EXPLAIN`으로 V4 인덱스 확인, 고아 스윕 스트리밍.
+
+향후 고려사항(요구사항 아님): 관리자 인증은 지금의 `X-Admin-Token`을 유지한다. 관리자
+세션 만료나 사용자별 권한이 **실제로 필요해지면** 단기 JWT 발급을 검토한다. 그때도
+얻는 것과 얻지 못하는 것은 `docs/01-decisions.md` 4-5와 함께 따져볼 것.

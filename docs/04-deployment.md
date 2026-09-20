@@ -89,12 +89,39 @@ server {
 }
 ```
 
+파일을 어디에 둘지는 박스마다 다릅니다. `nginx.conf`가 무엇을 include하는지 먼저 보세요 — 읽지 않는 디렉터리에 넣으면 파일이 **조용히 무시되고** 요청은 계속 기존 블록으로 갑니다.
+
+```bash
+grep -n "include" /etc/nginx/nginx.conf     # conf.d/*.conf 인지 sites-enabled/* 인지
+```
+
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 # 인증서 발급 전에, 이 이름이 기존 블록이 아니라 여기로 오는지 먼저 확인합니다
-curl -s http://api.example.com/actuator/health
+curl -s http://api.example.com/api/v1/policy/extensions
 sudo certbot --nginx -d api.example.com
 ```
+
+고정 확장자 7개가 돌아오면 이 블록이 잡은 것입니다. 기존 프로젝트의 응답이나 404가 나오면 catch-all에 먹힌 것이므로, certbot을 돌리기 전에 그것부터 해결해야 합니다 — 먼저 발급하면 엉뚱한 블록에 인증서가 붙습니다.
+
+**`certbot --nginx`는 nginx 설정을 고칩니다.** 어느 파일을 어떤 형태로 바꾸는지는 환경에 따라 다르므로, 발급 뒤에는 **실제 적용된 설정**에서 443 블록이 필요한 것을 갖췄는지 확인하세요. 파일 경로를 짚는 대신 `nginx -T`(적용 중인 전체 설정을 덤프)를 기준으로 보면 앞 절의 `conf.d`/`sites-enabled` 문제와도 일관됩니다.
+
+```bash
+sudo nginx -T 2>/dev/null | grep -n "listen 443\|server_name\|client_max_body_size"
+```
+
+`client_max_body_size`가 443 블록에 없으면 거기에 넣고 reload 하세요. 없으면 HTTPS로 오는 큰 업로드만 413으로 잘립니다.
+
+`verify.sh`에는 크기 검사가 없으므로 **이 한도는 38건이 덮지 않습니다.** 앱 한도(20MB) 아래의 파일이 통과하는지 직접 한 번 재는 편이 빠릅니다.
+
+```bash
+head -c 18000000 /dev/urandom > /tmp/big.txt
+curl -s -w "\nHTTP %{http_code}\n" -F "files=@/tmp/big.txt;filename=big.txt" \
+  https://api.example.com/api/v1/files | tail -c 300
+rm /tmp/big.txt
+```
+
+JSON이 돌아오면 nginx가 통과시키고 앱이 판정한 것입니다. `<html>` 413 페이지가 나오면 `client_max_body_size`가 443 블록에 없는 것입니다.
 
 ### 배포
 
@@ -195,6 +222,50 @@ ADMIN_TOKEN=<토큰> ../scripts/verify.sh https://api.example.com
 ```bash
 docker compose up -d app
 ```
+
+**앱이 떴다는 것은 CORS 값이 맞다는 뜻이 아닙니다.** 값을 비워둔 채 재시작해도 기동 로그는 똑같습니다. 실제로 재는 것은 이 둘입니다.
+
+```bash
+docker compose exec app printenv CORS_ALLOWED_ORIGINS        # 앱이 받은 값 자체
+curl -s -o /dev/null -D- -H "Origin: https://<vercel-도메인>" \
+  https://<api-도메인>/api/v1/policy/extensions | grep -i "access-control-allow-origin"
+```
+
+둘째 줄이 오리진을 그대로 돌려주지 않으면 **프론트 JavaScript가 API 응답을 사용할 수 없습니다.** 정책 변경처럼 프리플라이트가 필요한 요청은 실제 요청도 전송되지 않습니다. 화면에는 뜨는데 체크박스가 0개인 상태로 보입니다.
+
+### 프리뷰 배포에서는 CORS 때문에 API를 정상적으로 쓸 수 없습니다
+
+저장소를 Vercel에 연결하면 PR마다 프리뷰가 생기는데, **프리뷰 URL은 운영과 다른 오리진**입니다. `CORS_ALLOWED_ORIGINS`에는 운영 도메인만 있으므로, 프리뷰에서 화면을 열면 **정책 조회 응답을 JavaScript가 쓸 수 없고**, 정책 변경처럼 프리플라이트가 필요한 요청은 **실제 요청이 전송되지 않습니다.** 증상은 위와 같습니다 — 화면은 뜨고 오류 배너가 뜨며 체크박스가 0개.
+
+고장이 아니라 설정대로 도는 것입니다. **특정 PR의 프리뷰를 봐야 한다면 그 오리진 하나만 추가하면 됩니다.**
+
+```bash
+# deploy/.env — 운영 오리진은 남겨두고 쉼표로 덧붙인다
+CORS_ALLOWED_ORIGINS=https://<운영>.vercel.app,https://flow-git-<브랜치>-<스코프>.vercel.app
+
+docker compose up -d app        # 이 값은 기동 시 읽는다
+```
+
+**코드 변경도 와일드카드도 필요 없습니다.** `WebConfig`는 `allowedOrigins`(정확히 일치)를 쓰므로 주소를 그대로 넣으면 그 오리진만 열립니다. 이 주소는 **브랜치에서 파생되고 같은 브랜치에 새 커밋을 푸시해도 유지**되므로(이 문단을 쓴 PR에서 두 커밋에 걸쳐 동일한 것을 확인했습니다) 검토하는 동안 다시 고칠 일이 없습니다. 검토가 끝나면 **빼는 것이 좋습니다** — 그 브랜치가 살아 있는 한 계속 열려 있는 문이기 때문입니다.
+
+> 형식: `flow-git-<브랜치>-<스코프>.vercel.app`. 브랜치 이름이 길면 잘리고 해시가 붙으므로, **PR의 Vercel 코멘트에 찍힌 주소를 그대로 복사**하세요.
+
+상시로 열어두려는 경우는 이야기가 다릅니다. 브랜치마다 주소가 달라지므로 **모든 프리뷰를 주소 하나로 덮을 수는 없고**, 둘 중 하나를 골라야 하는데 둘 다 대가가 있습니다.
+
+- **`allowedOriginPatterns`로 패턴 허용** — `*.vercel.app`을 열면 **남의 Vercel 앱도 이 API를 부를 수 있습니다.** 범위를 좁히려면 프로젝트·스코프까지 포함한 패턴이어야 합니다
+- **프리뷰에서 `?api=`로 다른 백엔드 보기** — `config.js`는 이 덮어쓰기를 로컬에서 서빙된 페이지에만 허용합니다. 그 제한을 풀면 **배포된 오리진에서 `?api=`를 실은 링크 하나가 받는 사람의 관리자 토큰을 남의 주소로 보냅니다.** 그 경로를 막으려고 둔 제한이므로 다시 열지 않습니다([`01-decisions.md`](01-decisions.md) 4-6)
+
+---
+
+## 2-1. 배포 직후에 해야 하는 것 — 화면에 관리자 토큰 넣기
+
+**`.env`에 `EXTGUARD_ADMIN_TOKEN`을 넣는 것만으로는 화면에서 정책을 바꿀 수 없습니다.** 그 값은 서버가 요구하는 쪽이고, 브라우저는 자기가 가진 토큰을 헤더로 보내야 합니다. 화면 상단 **「관리자 토큰」** 입력란에 같은 값을 한 번 넣어야 합니다. `localStorage`에만 저장되고 서버로는 `X-Admin-Token` 헤더로만 나갑니다.
+
+```bash
+grep '^EXTGUARD_ADMIN_TOKEN=' deploy/.env | cut -d= -f2-
+```
+
+이걸 놓치면 증상이 헷갈립니다. **업로드는 되는데 체크박스만 눌러도 원래대로 돌아옵니다.** 쓰기 엔드포인트만 인증을 요구하고, 화면은 낙관적 UI라 401을 받으면 되돌리기 때문입니다. 실제 배포에서 여기서 한 번 멈췄습니다.
 
 ---
 
@@ -326,5 +397,5 @@ docker run --rm -v extguard_uploads:/data -v "$PWD:/backup" alpine \
 
 ### 주의
 
-- 업로드 볼륨에는 정리 잡이 없습니다. 디스크 사용량을 주기적으로 확인하세요.
+- 업로드 볼륨에는 정리 잡이 **있습니다**(위 `STORAGE_CLEANUP_CRON`). 다만 삭제가 실패하거나 쿼터 검사가 요청마다 한 번씩만 도는 탓에 사용량이 한동안 예상보다 클 수 있으니, 디스크 사용량은 별도로 확인하세요.
 - `fixed_extension_state` 행이 7개가 아니면 조회 시마다 WARN이 남습니다. 발견되면 마이그레이션을 다시 적용하세요(런타임 계정은 복구할 권한이 없습니다 — 의도된 설계입니다).
