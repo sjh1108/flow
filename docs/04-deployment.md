@@ -275,8 +275,10 @@ grep '^EXTGUARD_ADMIN_TOKEN=' deploy/.env | cut -d= -f2-
 
 ```bash
 cd backend
-./gradlew bootRun --args='--spring.profiles.active=dev'
+EXTGUARD_ADMIN_TOKEN=test-secret ./gradlew bootRun --args='--spring.profiles.active=dev'
 ```
+
+**토큰을 주어 관리자 가드를 켠 채로 띄웁니다.** 끄면 정책 쓰기가 무인증이 되어 운영과 다른 모양이 되고, 권한 관련 동작을 아예 잴 수 없습니다. 화면에서 정책을 바꾸려면 우측 상단 「관리자 토큰」에 같은 값을 넣어야 합니다(2-1절).
 
 인메모리 H2를 MySQL 호환 모드로 쓰며 **운영과 동일한 Flyway 마이그레이션**을 적용합니다. CHECK 제약도 그대로 동작합니다. 재시작하면 데이터는 사라집니다.
 
@@ -299,17 +301,25 @@ cd deploy && cp .env.example .env && docker compose up -d
 
 ## 4. 검증 절차
 
+3절대로 **가드를 켠 서버**를 띄워 두고, 같은 토큰으로 돌립니다.
+
 ```bash
+# 저장소 루트에서. 1)의 cd를 subshell에 가둬야 2)·3)이 scripts/를 찾습니다.
+
 # 1) 백엔드 단위·통합 테스트
-cd backend && ./gradlew test
+(cd backend && ./gradlew test)
 
 # 2) API 엔드투엔드
-scripts/verify.sh http://localhost:8080
+ADMIN_TOKEN=test-secret scripts/verify.sh http://localhost:8080
 
 # 3) 브라우저 검증 (Chromium 필요)
 npm install playwright
-node scripts/ui-verify.mjs      # FRONTEND/API 환경변수로 주소 지정 가능
+ADMIN_TOKEN=test-secret node scripts/ui-verify.mjs   # FRONTEND/API 환경변수로 주소 지정 가능
 ```
+
+**토큰을 빠뜨리면 뒤의 둘이 실패합니다.** `verify.sh`는 정책 변경이 401이 되고, 브라우저 검증의 「권한 없는 쓰기」 절은 서버 가드가 꺼져 있으면 잴 것이 없어집니다. 그 절은 필터가 끊는 401이 브라우저에 도달하는지를 재는 곳이라([`01-decisions.md`](01-decisions.md) 4-7), 가드가 켜져 있어야만 의미가 있습니다.
+
+> **브라우저 계층은 CI에 없습니다**(`.github/workflows/ci.yml` 머리말 — Chromium이 필요해서 의도적으로 뺐습니다). CI가 초록이라는 것이 이 계층까지 돌았다는 뜻은 아니므로, 손으로 한 번 돌려야 합니다.
 
 각 계층의 검증 건수는 [`00-requirements-traceability.md`](00-requirements-traceability.md)의 「검증 총계」를 참고하세요. 숫자를 여러 문서에 복사하면 어긋나므로 그 표 한 곳에서만 관리합니다.
 

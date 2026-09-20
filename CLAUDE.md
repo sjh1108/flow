@@ -89,12 +89,25 @@ Spring Boot 4.1 / Java 21 / MySQL 8.4 / 바닐라 JS(무의존).
 ## 검증
 
 세 계층을 전부 돌려야 "통과"라고 말할 수 있다. CI는 앞의 두 개를 자동으로 돌린다.
+**브라우저 계층은 CI에 없다** — Chromium이 필요해 의도적으로 뺐다(`ci.yml` 머리말).
+그러므로 "CI 초록"은 브라우저 계층이 돌았다는 뜻이 아니고, 손으로 돌려야 한다.
+
+서버는 **관리자 가드를 켠 채로** 띄운다. 끄면 정책 쓰기가 무인증이라 운영과 다른 모양이
+되고, 권한 관련 동작을 잴 수 없다.
 
 ```bash
-cd backend && ./gradlew test                              # 단위·통합
-scripts/verify.sh http://localhost:8080                   # 실행 중인 API 필요
-CHROMIUM=/opt/pw-browsers/chromium node scripts/ui-verify.mjs   # 브라우저
+cd backend && EXTGUARD_ADMIN_TOKEN=test-secret \
+  ./gradlew bootRun --args='--spring.profiles.active=dev'
+
+# 아래 세 줄은 저장소 루트에서. cd를 subshell에 가둬야 뒤의 둘이 경로를 찾는다.
+(cd backend && ./gradlew test)                                      # 단위·통합
+ADMIN_TOKEN=test-secret scripts/verify.sh http://localhost:8080     # 실행 중인 API 필요
+ADMIN_TOKEN=test-secret CHROMIUM=/opt/pw-browsers/chromium \
+  node scripts/ui-verify.mjs                                        # 브라우저
 ```
+
+토큰을 빠뜨리면 뒤의 둘이 실패한다. `verify.sh`는 정책 변경이 401이 되고, 브라우저 검증의
+「권한 없는 쓰기」 절은 서버 가드가 꺼져 있으면 잴 것이 없다.
 
 검증 **건수는 `docs/00-requirements-traceability.md`의 「검증 총계」 한 곳에서만
 관리**한다. README·02-tooling·04-deployment에는 숫자를 적지 않는다. 같은 숫자를

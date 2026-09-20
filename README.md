@@ -35,7 +35,10 @@ MySQL도 Docker도 필요 없습니다.
 
 ```bash
 # 백엔드 (H2 인메모리 + 운영과 동일한 Flyway 마이그레이션)
-cd backend && ./gradlew bootRun --args='--spring.profiles.active=dev'
+#   EXTGUARD_ADMIN_TOKEN을 주어 관리자 가드를 켠 채로 띄웁니다 — 운영과 같은 모양이고,
+#   끄면 정책 쓰기가 무인증이 되어 권한 관련 동작을 아예 잴 수 없습니다.
+cd backend && EXTGUARD_ADMIN_TOKEN=test-secret \
+  ./gradlew bootRun --args='--spring.profiles.active=dev'
 
 # 프론트엔드 (별도 터미널)
 cd frontend && python3 -m http.server 8081
@@ -51,15 +54,25 @@ http://localhost:8081 을 엽니다.
 > 다른 주소를 쓰려면 `?api=`를 붙입니다. 예: http://localhost:8081/?api=http://localhost:9000
 > 이 덮어쓰기는 **로컬에서 연 페이지에만** 적용됩니다(`frontend/src/config.js` 참고).
 
+화면 우측 상단 **「관리자 토큰」**에 위 `test-secret`을 넣으세요. 정책 변경은 그 토큰을 요구합니다 — 넣지 않으면 체크박스를 눌러도 "관리자 토큰이 필요합니다"가 뜹니다.
+
 직접 해볼 것: `.exe` 파일을 업로드해 성공하는지 보고 → `exe` 체크박스를 켠 뒤 → 같은 파일을 다시 올려보세요.
 
 ## 검증
 
+위 빠른 시작대로 **가드를 켠 서버**를 띄워 두고, 같은 토큰으로 돌립니다.
+
 ```bash
-cd backend && ./gradlew test        # 단위·통합 테스트
-scripts/verify.sh                   # API 엔드투엔드 (실행 중인 API 대상)
-node scripts/ui-verify.mjs          # 브라우저 (npm install playwright 필요)
+# 저장소 루트에서. 첫 줄을 subshell로 감싼 것은 cd가 셸에 남으면
+# 뒤의 두 줄이 backend/scripts/를 찾기 때문입니다.
+(cd backend && ./gradlew test)                                 # 단위·통합 테스트
+ADMIN_TOKEN=test-secret scripts/verify.sh                      # API 엔드투엔드
+ADMIN_TOKEN=test-secret node scripts/ui-verify.mjs             # 브라우저 (playwright 필요)
 ```
+
+토큰을 빠뜨리면 뒤의 둘이 실패합니다. `verify.sh`는 정책 변경이 401이 되고, 브라우저 검증은 **권한 없는 쓰기를 재는 절**이 서버 가드가 꺼져 있으면 잴 것이 없어집니다.
+
+> CI는 앞의 두 계층만 돌립니다. **브라우저 계층은 CI에 없으므로**(`.github/workflows/ci.yml` 머리말) "CI 초록"이 브라우저 검증까지 덮는다는 뜻은 아닙니다.
 
 검증 건수는 [`docs/00-requirements-traceability.md`](docs/00-requirements-traceability.md)의 「검증 총계」 한 곳에서만 관리합니다.
 

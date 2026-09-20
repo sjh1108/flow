@@ -23,6 +23,7 @@ import path from 'node:path';
 const FRONTEND = process.env.FRONTEND || 'http://127.0.0.1:8081/index.html';
 const API_BASE = process.env.API || 'http://localhost:8080';
 const API = `${API_BASE}/api/v1/policy/extensions`;
+const AUDIT = `${API_BASE}/api/v1/policy/audit`;
 const TOKEN = process.env.ADMIN_TOKEN || '';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'extguard-ui-'));
@@ -61,6 +62,53 @@ async function resetPolicy() {
   }
 }
 
+/** Say what is wrong and what to run, then stop. */
+function abort(...reasons) {
+  for (const reason of reasons) console.error(`\n  ${reason}`);
+  console.error('\n  가드를 켠 서버에 같은 토큰으로 돌리세요:\n');
+  console.error("    cd backend && EXTGUARD_ADMIN_TOKEN=test-secret \\");
+  console.error("      ./gradlew bootRun --args='--spring.profiles.active=dev'");
+  console.error('\n    # 저장소 루트에서');
+  console.error('    ADMIN_TOKEN=test-secret node scripts/ui-verify.mjs\n');
+  process.exit(1);
+}
+
+/**
+ * Fail here, not twenty assertions later.
+ *
+ * Section 7 is the only part that needs the server's admin guard ON and a
+ * matching token, and it needs both: without them the run fails far from the
+ * cause. Guard on with no token, and the first write 401s and the run dies at a
+ * selector timeout in section 2 that says nothing about tokens. Guard OFF, and
+ * the anonymous toggle in section 7 SUCCEEDS -- measured: the toast reads "bat
+ * 확장자를 차단했습니다" -- so the script reports the permission check as broken
+ * when what is actually missing is the guard.
+ *
+ * So establish the state rather than rule one failure out. An earlier version
+ * probed a write and treated anything but 401 as fine, which reads a guard-off
+ * server as a healthy one: with the guard off the write reaches the controller
+ * and comes back 400.
+ *
+ * The audit trail separates all four states in two reads. It is the one GET the
+ * guard covers (AdminTokenFilter#requiresAdmin), so anonymous access to it is
+ * 401 exactly when the guard is on -- and reading it changes nothing.
+ */
+async function requireAdminGuard() {
+  const anonymous = await fetch(AUDIT);
+  if (anonymous.status !== 401) {
+    abort('서버의 관리자 가드가 꺼져 있습니다 (EXTGUARD_ADMIN_TOKEN 미설정).',
+          '가드가 없으면 토큰 없는 쓰기가 그냥 성공해서 「권한 없는 쓰기」 절이 잴 것이 없습니다.');
+  }
+  if (!TOKEN) {
+    abort('서버 가드는 켜져 있는데 ADMIN_TOKEN이 없습니다.');
+  }
+  const authenticated = await fetch(AUDIT, { headers: adminHeaders });
+  if (authenticated.status !== 200) {
+    abort('ADMIN_TOKEN이 서버의 EXTGUARD_ADMIN_TOKEN과 다릅니다.');
+  }
+}
+
+await requireAdminGuard();
 await resetPolicy();
 
 const browser = await chromium.launch({
@@ -227,6 +275,41 @@ check('남은 용량 detail이 표시됨', (await readQuota('.result-detail')).i
 check('오류 코드가 STORAGE_QUOTA_EXCEEDED',
   (await readQuota('.result-code')).trim() === 'STORAGE_QUOTA_EXCEEDED');
 await page.unroute('**/api/v1/files');
+
+/* ------------------------------------------------------------------ *
+ * 7. 권한 없는 쓰기
+ *
+ * A token-carrying page can never reach this. Every section above seeds the
+ * admin token, so the 401 path was walked by nothing -- and that is how a real
+ * break reached production: the filter answers from the chain, so its 401 went
+ * out with no CORS header, the browser discarded it, and the page reported a
+ * network failure instead of a permission problem. MockMvc and curl both read
+ * that 401 happily, because neither enforces CORS. Only a browser sees it.
+ *
+ * A fresh context with no token in storage is what makes this measurable.
+ * ------------------------------------------------------------------ */
+console.log('\n7. 권한 없는 쓰기');
+
+const anonContext = await browser.newContext();
+const anonPage = await anonContext.newPage();
+const corsBlocked = [];
+anonPage.on('console', (message) => {
+  if (message.text().includes('CORS')) corsBlocked.push(message.text());
+});
+
+await anonPage.goto(PAGE, { waitUntil: 'networkidle' });
+await anonPage.waitForSelector('.chip input', { timeout: 15000 });
+await anonPage.locator('.chip input').first().check();
+await anonPage.waitForSelector('.toast', { timeout: 15000 });
+
+const toastText = (await anonPage.locator('.toast').first().textContent()) ?? '';
+check('토큰 없이 토글하면 권한 안내가 뜸', toastText.includes('관리자 토큰이 필요합니다'), toastText);
+check('CORS로 차단되지 않음 (401이 브라우저에 도달)', corsBlocked.length === 0, corsBlocked[0] ?? '');
+
+const reverted = await anonPage.locator('.chip input').first().isChecked();
+check('거절된 토글은 원래 상태로 되돌아감', reverted === false);
+
+await anonContext.close();
 
 if (process.env.SCREENSHOT) {
   await page.screenshot({ path: process.env.SCREENSHOT, fullPage: true });

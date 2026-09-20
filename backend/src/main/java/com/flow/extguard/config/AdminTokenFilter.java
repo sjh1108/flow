@@ -13,6 +13,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -27,8 +29,16 @@ import tools.jackson.databind.ObjectMapper;
  *
  * <p>If no token is configured the guard disables itself, so the project can be
  * cloned and run with no setup. A startup warning makes that state visible.
+ *
+ * <p>This filter must run <em>after</em> the CORS filter in {@link WebConfig}. It
+ * answers from the filter chain rather than letting the request reach the servlet, so
+ * whatever adds {@code Access-Control-Allow-Origin} has to have run already --
+ * otherwise the browser discards this 401 and the page reports a network failure
+ * instead of a permission problem. The order is stated rather than inherited so that
+ * a later edit has to argue with this comment.
  */
 @Component
+@Order(Ordered.LOWEST_PRECEDENCE)
 public class AdminTokenFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(AdminTokenFilter.class);
