@@ -104,11 +104,13 @@ sudo certbot --nginx -d api.example.com
 
 고정 확장자 7개가 돌아오면 이 블록이 잡은 것입니다. 기존 프로젝트의 응답이나 404가 나오면 catch-all에 먹힌 것이므로, certbot을 돌리기 전에 그것부터 해결해야 합니다 — 먼저 발급하면 엉뚱한 블록에 인증서가 붙습니다.
 
-**certbot은 이 파일을 다시 씁니다.** 443 블록을 새로 만들면서 `client_max_body_size`를 옮겨 놓았는지 확인하세요.
+**`certbot --nginx`는 nginx 설정을 고칩니다.** 어느 파일을 어떤 형태로 바꾸는지는 환경에 따라 다르므로, 발급 뒤에는 **실제 적용된 설정**에서 443 블록이 필요한 것을 갖췄는지 확인하세요. 파일 경로를 짚는 대신 `nginx -T`(적용 중인 전체 설정을 덤프)를 기준으로 보면 앞 절의 `conf.d`/`sites-enabled` 문제와도 일관됩니다.
 
 ```bash
-grep -n "listen\|server_name\|client_max_body_size" /etc/nginx/conf.d/extguard-api.conf
+sudo nginx -T 2>/dev/null | grep -n "listen 443\|server_name\|client_max_body_size"
 ```
+
+`client_max_body_size`가 443 블록에 없으면 거기에 넣고 reload 하세요. 없으면 HTTPS로 오는 큰 업로드만 413으로 잘립니다.
 
 `verify.sh`에는 크기 검사가 없으므로 **이 한도는 38건이 덮지 않습니다.** 앱 한도(20MB) 아래의 파일이 통과하는지 직접 한 번 재는 편이 빠릅니다.
 
@@ -229,7 +231,7 @@ curl -s -o /dev/null -D- -H "Origin: https://<vercel-도메인>" \
   https://<api-도메인>/api/v1/policy/extensions | grep -i "access-control-allow-origin"
 ```
 
-둘째 줄이 오리진을 그대로 돌려주지 않으면 브라우저가 모든 호출을 차단합니다 — 화면은 뜨는데 체크박스가 0개인 상태가 됩니다.
+둘째 줄이 오리진을 그대로 돌려주지 않으면 **프론트 JavaScript가 API 응답을 사용할 수 없습니다.** 정책 변경처럼 프리플라이트가 필요한 요청은 실제 요청도 전송되지 않습니다. 화면에는 뜨는데 체크박스가 0개인 상태로 보입니다.
 
 ### 프리뷰 배포는 API를 부르지 못합니다
 
@@ -395,5 +397,5 @@ docker run --rm -v extguard_uploads:/data -v "$PWD:/backup" alpine \
 
 ### 주의
 
-- 업로드 볼륨에는 정리 잡이 없습니다. 디스크 사용량을 주기적으로 확인하세요.
+- 업로드 볼륨에는 정리 잡이 **있습니다**(위 `STORAGE_CLEANUP_CRON`). 다만 삭제가 실패하거나 쿼터 검사가 요청마다 한 번씩만 도는 탓에 사용량이 한동안 예상보다 클 수 있으니, 디스크 사용량은 별도로 확인하세요.
 - `fixed_extension_state` 행이 7개가 아니면 조회 시마다 WARN이 남습니다. 발견되면 마이그레이션을 다시 적용하세요(런타임 계정은 복구할 권한이 없습니다 — 의도된 설계입니다).
