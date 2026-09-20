@@ -13,7 +13,19 @@
 #
 #   scripts/verify-grants.sh
 #
-# Needs Docker. Brings the deploy stack up and tears it down again.
+# Needs Docker. Brings a stack up and tears it down again.
+#
+# It runs under its own compose project name, not the `extguard` that
+# deploy/docker-compose.yml declares. That is a safety property, not tidiness:
+# cleanup() ends in `down -v`, and under the deployed project name that would
+# delete the running stack's mysql-data and uploads volumes -- the database and
+# every uploaded file. Under its own name it can only ever delete the volumes it
+# just created.
+#
+# Enumerating the volumes to protect was the first attempt and it was wrong: it
+# listed mysql-data and missed uploads, so a box with only the uploads volume
+# left passed the check and lost the files anyway. Isolation does not have a
+# list to keep in sync.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,16 +38,50 @@ APP_PW=apppw0123456789
 # migrator doing it. Alphanumeric by design -- mysql-init/01-users.sh rejects
 # anything that would need quoting.
 ENV_FILE="$(mktemp)"
+
+# Deliberately not the default 8080. The published host port is a variable that
+# an operator has to set on any instance already running something on 8080, and
+# a run that only ever used the default would never execute that substitution --
+# the one thing the variable exists for. Using it here means the compose file
+# renders the override on every commit, and the health check below proves the
+# app is reachable at it. 8080 stays covered by every other environment.
+APP_PORT=18080
+API="http://localhost:$APP_PORT"
+
 cat > "$ENV_FILE" <<ENV
 MYSQL_ROOT_PASSWORD=$ROOT_PW
 MIGRATOR_PASSWORD=$MIGRATOR_PW
 APP_DB_PASSWORD=$APP_PW
+APP_HOST_PORT=$APP_PORT
 EXTGUARD_ADMIN_TOKEN=
 CORS_ALLOWED_ORIGINS=http://localhost:5173
 API_DOMAIN=localhost
 ENV
 
-compose() { docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.yml "$@"; }
+PROJECT=extguard-verify
+compose() { docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f deploy/docker-compose.yml "$@"; }
+
+# Assert the isolation rather than trusting it. `-p` outranks the file's `name:`
+# key, but a future edit could drop the flag, and the damage would show up as
+# someone's deleted uploads rather than as a failing test. Reading the effective
+# project name back from compose makes that edit fail here instead. `config`
+# needs no daemon, so this costs nothing and runs on every invocation -- CI
+# included, which is what keeps it honest.
+effective=$(docker compose -p "$PROJECT" --env-file "$ENV_FILE" \
+  -f deploy/docker-compose.yml config 2>/dev/null | sed -n 's/^name: //p' | head -1)
+deployed=$(sed -n 's/^name: *//p' deploy/docker-compose.yml | head -1)
+
+if [ -z "$effective" ]; then
+  echo "compose 프로젝트 이름을 읽지 못했습니다. docker compose가 있는지 확인하세요." >&2
+  exit 1
+fi
+if [ "$effective" = "$deployed" ]; then
+  echo "이 스크립트가 배포 스택과 같은 compose 프로젝트('$effective')로 돌려고 합니다." >&2
+  echo "cleanup의 'down -v'가 그 프로젝트의 볼륨을 전부 지웁니다 --" >&2
+  echo "배포된 기계라면 데이터베이스와 업로드 파일까지." >&2
+  echo "compose 호출에서 -p 가 빠졌는지 확인하세요." >&2
+  exit 1
+fi
 
 cleanup() {
   compose down -v --remove-orphans >/dev/null 2>&1 || true
@@ -92,7 +138,7 @@ if ! compose up -d --build; then
 fi
 
 for _ in $(seq 1 90); do
-  curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1 && break
+  curl -sf "$API/actuator/health" >/dev/null 2>&1 && break
   sleep 2
 done
 
@@ -117,7 +163,7 @@ printf '%s' "$accounts" | grep -q extguard_app; check $? \
 printf '%s' "$accounts" | grep -q extguard_migrator; check $? \
   "extguard_migrator 생성" "$accounts"
 
-health=$(curl -sf http://localhost:8080/actuator/health 2>&1)
+health=$(curl -sf "$API/actuator/health" 2>&1)
 printf '%s' "$health" | grep -q '"status":"UP"'; check $? \
   "앱이 기동" "$health"
 

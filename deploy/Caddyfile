@@ -3,7 +3,10 @@
 # Only needed if this stack terminates TLS on the instance. If another project
 # already owns ports 80/443, skip the caddy service (it sits behind the
 # "with-tls" profile and does not start by default) and add a reverse proxy
-# entry to the existing server pointing at 127.0.0.1:8080.
+# entry to the existing server pointing at the host port the app publishes
+# (APP_HOST_PORT in .env, 8080 by default). The reverse_proxy below is
+# unaffected by that setting: it reaches the container over the compose
+# network, where the port is always 8080.
 
 {$API_DOMAIN} {
 	encode gzip

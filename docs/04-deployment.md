@@ -58,8 +58,43 @@ sudo netfilter-persistent save
 **③ 기존 프로젝트와 공존**
 - compose 프로젝트명을 `extguard`로 고정해 컨테이너·볼륨 이름이 충돌하지 않습니다.
 - **MySQL은 호스트 포트를 공개하지 않습니다.** 기존 MySQL의 3306과 충돌하지 않고 외부에서 접근할 수도 없습니다.
-- 앱은 `127.0.0.1:8080`에만 바인딩합니다.
-- 기존 프로젝트가 이미 80/443을 쓰고 있으면 **caddy 서비스를 띄우지 말고**(기본적으로 `with-tls` 프로파일 뒤에 있어 자동 실행되지 않음) 기존 리버스 프록시에 `127.0.0.1:8080`으로 가는 항목만 추가하세요.
+- 앱은 **루프백에만** 바인딩합니다. 호스트 포트는 `.env`의 `APP_HOST_PORT`로 정하고 기본값이 `8080`입니다.
+- **이미 8080을 쓰는 것이 있으면 반드시 바꾸세요.** compose는 빈 포트로 물러서지 않고 `port is already allocated`로 기동에 실패합니다. 먼저 확인하세요: `ss -ltn | grep :8080`
+  컨테이너 안은 언제나 8080이라 Caddyfile·헬스체크·이미지의 `EXPOSE`는 이 값과 무관합니다.
+- 기존 프로젝트가 이미 80/443을 쓰고 있으면 **caddy 서비스를 띄우지 말고**(기본적으로 `with-tls` 프로파일 뒤에 있어 자동 실행되지 않음) 기존 리버스 프록시에 `127.0.0.1:${APP_HOST_PORT}`로 가는 항목만 추가하세요.
+
+**nginx를 이미 쓰고 있다면** (`APP_HOST_PORT=18080`인 경우):
+
+```nginx
+server {
+    listen 80;
+    # 반드시 이름을 명시합니다. 비우거나 `_`로 두면 기존 프로젝트의 catch-all 블록과
+    # 어느 쪽이 이길지가 설정 파일 읽는 순서에 달리게 됩니다. 와일드카드 DNS(예:
+    # DuckDNS)를 쓰면 하위 이름이 이미 기존 블록으로 들어가고 있으므로 특히 그렇습니다.
+    server_name api.example.com;
+
+    # 앱의 max-request-size가 210MB(20MB × 10개 + 여유)입니다. nginx 기본값은 1m이라
+    # 이것을 두지 않으면 정상 업로드가 앱에 닿기도 전에 413으로 잘립니다. 그러면 화면에
+    # 뜨는 거절 사유가 정책인지 프록시인지 구분되지 않습니다. Caddyfile의 max_size와
+    # 같은 값입니다.
+    client_max_body_size 220m;
+
+    location / {
+        proxy_pass http://127.0.0.1:18080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+# 인증서 발급 전에, 이 이름이 기존 블록이 아니라 여기로 오는지 먼저 확인합니다
+curl -s http://api.example.com/actuator/health
+sudo certbot --nginx -d api.example.com
+```
 
 ### 배포
 
@@ -82,7 +117,7 @@ openssl rand -base64 32
 docker compose up -d --build            # 기존 리버스 프록시를 쓰는 경우
 docker compose --profile with-tls up -d --build   # Caddy로 TLS까지 처리하는 경우
 
-curl localhost:8080/actuator/health
+curl localhost:${APP_HOST_PORT:-8080}/actuator/health
 ```
 
 수동 단계는 없습니다. 한 줄이 끝입니다.
@@ -137,19 +172,23 @@ ADMIN_TOKEN=<토큰> ../scripts/verify.sh https://api.example.com
 
 1. Vercel에서 저장소를 임포트하고 **Root Directory를 `frontend`** 로 지정
 2. Framework Preset은 **Other**, 빌드 명령은 비움
-3. 배포 전 `frontend/index.html`의 API 주소를 수정:
+3. `frontend/index.html`의 API 주소를 확인합니다. **커밋된 값이 그대로 배포되는 값**입니다 — 빌드 단계가 없으므로 Vercel은 이 파일을 있는 그대로 냅니다. 이 값을 환경마다 바꿔주는 장치는 없습니다.
 
 ```html
-<meta name="api-base" content="https://api.example.com">
+<meta name="api-base" content="https://api.algoj.duckdns.org">
 ```
 
-> API 주소를 빌드 시 상수가 아니라 `<meta>` 태그에서 읽는 이유는, 같은 정적 번들을 환경만 바꿔 배포할 수 있게 하기 위해서입니다. 빌드 파이프라인 없이 이 한 줄만 고치면 됩니다.
+> API 주소를 빌드 시 상수가 아니라 `<meta>` 태그에서 읽는 이유는, 같은 정적 번들을 빌드 파이프라인 없이 배포하기 위해서입니다. 환경을 바꾸려면 이 한 줄을 고쳐 커밋합니다.
+>
+> 그래서 **로컬에서 연 페이지는 이 태그를 무시합니다.** `localhost:8080`을 쓰거나, `?api=`가 지정한 주소를 씁니다. 그러지 않으면 README 빠른 시작대로 로컬 백엔드를 띄워도 브라우저는 운영 API를 부릅니다. 이 덮어쓰기는 로컬에서 연 페이지에만 적용됩니다 — 배포된 페이지에서 허용하면 `?api=`를 실은 링크가 관리자 토큰을 남의 주소로 보내게 됩니다. 근거는 [`01-decisions.md`](01-decisions.md) 4-6.
 
 4. `frontend/vercel.json`의 CSP `connect-src`에 API 도메인을 넣습니다. 여기가 비어 있으면 브라우저가 API 호출을 차단합니다.
 
 ```json
-"connect-src 'self' https://api.example.com"
+"connect-src 'self' https://api.algoj.duckdns.org http://localhost:8080"
 ```
+
+> `http://localhost:8080`은 같은 번들을 로컬에서 열어볼 때를 위해 남겨둔 것입니다. 운영 페이지가 로컬 주소로 요청을 보낼 일은 없으므로 두어도 무해하고, 빼도 배포에는 지장이 없습니다.
 
 5. 배포 후 백엔드 `.env`의 `CORS_ALLOWED_ORIGINS`에 Vercel 도메인을 추가하고 앱을 재시작합니다.
 
@@ -220,7 +259,13 @@ node scripts/ui-verify.mjs      # FRONTEND/API 환경변수로 주소 지정 가
 | `STORAGE_MIN_FREE_SPACE` | `1GB` | 파일시스템에 남겨둘 최소 여유. 쿼터와 **별개로** 검사 |
 | `STORAGE_RETENTION` | `30d` | 이 기간이 지난 **파일** 삭제. `upload_record` 행은 남고 `purged_at`이 채워짐 |
 | `STORAGE_CLEANUP_CRON` | `0 30 3 * * *` | 정리 작업 실행 시각 (Spring 6필드 cron) |
-| `SERVER_PORT` | `8080` | |
+| `SERVER_PORT` | `8080` | 컨테이너 **안에서** 앱이 듣는 포트. compose는 이 값을 바꾸지 않습니다 |
+
+호스트 쪽 포트는 앱 환경변수가 아니라 compose 설정입니다.
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `APP_HOST_PORT` | `8080` | 호스트가 공개하는 포트 (`127.0.0.1:${APP_HOST_PORT}:8080`). 리버스 프록시가 가리킬 곳 |
 
 애플리케이션 설정(`extguard.*`)은 `backend/src/main/resources/application.yml` 참조.
 
@@ -230,15 +275,17 @@ node scripts/ui-verify.mjs      # FRONTEND/API 환경변수로 주소 지정 가
 
 ## 6. 운영 점검
 
+아래 `$PORT`는 `.env`의 `APP_HOST_PORT`입니다 (기본 8080). `cd deploy && PORT=$(grep -E '^APP_HOST_PORT=' .env | cut -d= -f2)` 로 꺼내 쓰면 됩니다.
+
 ```bash
 # 헬스
-curl -s localhost:8080/actuator/health
+curl -s localhost:$PORT/actuator/health
 
 # 정책 변경 이력
-curl -s -H "X-Admin-Token: $TOKEN" localhost:8080/api/v1/policy/audit | jq
+curl -s -H "X-Admin-Token: $TOKEN" localhost:$PORT/api/v1/policy/audit | jq
 
 # 최근 업로드 (거부 포함)
-curl -s localhost:8080/api/v1/files | jq
+curl -s localhost:$PORT/api/v1/files | jq
 
 # 고정 확장자 7행 무결성
 docker compose exec mysql mysql -uroot -p"$MYSQL_ROOT_PASSWORD" extguard \

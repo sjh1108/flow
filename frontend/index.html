@@ -7,10 +7,16 @@
 
   <!--
     The API base is read from this tag at runtime rather than baked in at build
-    time, so the same static bundle can be deployed to any environment. Vercel
-    rewrites the content value per environment; see docs/04-deployment.md.
+    time, so the same static bundle works in any environment with no build step.
+    Nothing rewrites this automatically: it is edited by hand before deploying,
+    and the CSP connect-src in vercel.json has to name the same origin or the
+    browser blocks every call. See docs/04-deployment.md section 2.
+
+    A locally served page ignores this tag and uses localhost:8080, or whatever
+    `?api=` names, so the README quick start reaches the backend it just told
+    you to start. config.js explains why the override stops at local pages.
   -->
-  <meta name="api-base" content="http://localhost:8080">
+  <meta name="api-base" content="https://api.algoj.duckdns.org">
 
   <link rel="stylesheet" href="./assets/styles.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">

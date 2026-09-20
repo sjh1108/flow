@@ -30,10 +30,19 @@ services:
       - mysql-data:/var/lib/mysql
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
+      # 127.0.0.1, not localhost: the address decides the transport, and the
+      # transport is the whole point of this check. `-h localhost` connects over
+      # the unix socket, which answers during entrypoint initialisation -- the
+      # image runs a temporary server with --skip-networking while it executes
+      # /docker-entrypoint-initdb.d. The service was therefore reported healthy
+      # while TCP was still closed, depends_on released the migrate container,
+      # and it failed with "Connection refused" against mysql:3306. Every
+      # dependent reaches this database over TCP, so the check has to.
+      #
       # No password: `mysqladmin ping` succeeds whenever the server answers the
       # handshake, access denied included, so the credential adds nothing here
       # and would only put the root password in the container's argv.
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -131,7 +140,12 @@ services:
       - uploads:/var/lib/extguard/files
     ports:
       # Bound to loopback only: Caddy (or an existing reverse proxy) fronts it.
-      - "127.0.0.1:8080:8080"
+      #
+      # Only the host side is configurable. Instances that already run something
+      # on 8080 set APP_HOST_PORT in .env; everywhere else the default keeps the
+      # address this file has always published. The container side stays 8080 --
+      # the Dockerfile's EXPOSE, the healthcheck and Caddy all name that port.
+      - "127.0.0.1:${APP_HOST_PORT:-8080}:8080"
     deploy:
       resources:
         limits:

@@ -21,7 +21,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 const FRONTEND = process.env.FRONTEND || 'http://127.0.0.1:8081/index.html';
-const API = `${process.env.API || 'http://localhost:8080'}/api/v1/policy/extensions`;
+const API_BASE = process.env.API || 'http://localhost:8080';
+const API = `${API_BASE}/api/v1/policy/extensions`;
 const TOKEN = process.env.ADMIN_TOKEN || '';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'extguard-ui-'));
@@ -68,6 +69,31 @@ const browser = await chromium.launch({
 });
 const page = await browser.newPage({ viewport: { width: 1000, height: 1200 } });
 
+// config.js reads the admin token from this key. Without it the page is
+// anonymous, so every write in sections 2 and 3 comes back 401 against an API
+// that has EXTGUARD_ADMIN_TOKEN set -- which a deployed one does. This script
+// already takes ADMIN_TOKEN for its own fetches; the browser needs the same one.
+await page.addInitScript((token) => {
+  if (!token) return;
+  try {
+    localStorage.setItem('extguard.adminToken', token);
+  } catch {
+    /* Private browsing or blocked storage: the page stays anonymous. */
+  }
+}, TOKEN);
+
+// index.html carries the deployed API origin, because Vercel serves the file
+// exactly as committed. Left alone, a locally served page would drive the
+// deployed system while the setup fetches above talk to API_BASE.
+//
+// `?api=` is the same override a person uses when following the README quick
+// start, not a hook added for this script -- so this run exercises the path the
+// documentation hands to a human. config.js ignores it unless the page is
+// served locally, which is why a remote FRONTEND still uses its own tag.
+const target = new URL(FRONTEND);
+target.searchParams.set('api', API_BASE);
+const PAGE = target.toString();
+
 const scriptErrors = [];
 page.on('pageerror', (e) => scriptErrors.push(String(e)));
 page.on('console', (message) => {
@@ -78,7 +104,7 @@ page.on('console', (message) => {
   }
 });
 
-await page.goto(FRONTEND, { waitUntil: 'networkidle' });
+await page.goto(PAGE, { waitUntil: 'networkidle' });
 
 console.log('\n1. 정책 화면 렌더링');
 await page.waitForSelector('.chip', { timeout: 15000 });
