@@ -13,13 +13,19 @@
 #
 #   scripts/verify-grants.sh
 #
-# Needs Docker. Brings the deploy stack up and tears it down again.
+# Needs Docker. Brings a stack up and tears it down again.
 #
-# NOT FOR A MACHINE THAT RUNS THIS STACK. It uses deploy/docker-compose.yml,
-# whose project name is fixed to `extguard`, and its cleanup is `down -v` -- on
-# a deployment box that is the running stack plus its mysql-data and uploads
-# volumes, deleted. The guard below refuses rather than trusting anyone to
-# remember this.
+# It runs under its own compose project name, not the `extguard` that
+# deploy/docker-compose.yml declares. That is a safety property, not tidiness:
+# cleanup() ends in `down -v`, and under the deployed project name that would
+# delete the running stack's mysql-data and uploads volumes -- the database and
+# every uploaded file. Under its own name it can only ever delete the volumes it
+# just created.
+#
+# Enumerating the volumes to protect was the first attempt and it was wrong: it
+# listed mysql-data and missed uploads, so a box with only the uploads volume
+# left passed the check and lost the files anyway. Isolation does not have a
+# list to keep in sync.
 set -uo pipefail
 
 cd "$(dirname "$0")/.."
@@ -52,26 +58,29 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173
 API_DOMAIN=localhost
 ENV
 
-compose() { docker compose --env-file "$ENV_FILE" -f deploy/docker-compose.yml "$@"; }
+PROJECT=extguard-verify
+compose() { docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f deploy/docker-compose.yml "$@"; }
 
-# Refuse to run where this stack already lives. `down -v` in cleanup() does not
-# distinguish a stack this script created from one somebody is serving traffic
-# from: both are project `extguard`, and both lose their volumes. A CI runner
-# has neither container nor volume, so this never fires there.
-existing_containers=$(docker compose -f deploy/docker-compose.yml ps -aq 2>/dev/null | wc -l)
-existing_volume=$(docker volume ls -q --filter name='^extguard_mysql-data$' 2>/dev/null | wc -l)
-if [ "$existing_containers" -gt 0 ] || [ "$existing_volume" -gt 0 ]; then
-  echo "이 기계에 extguard 스택의 흔적이 있습니다:" >&2
-  [ "$existing_containers" -gt 0 ] && echo "  컨테이너 ${existing_containers}개" >&2
-  [ "$existing_volume" -gt 0 ] && echo "  볼륨 extguard_mysql-data" >&2
-  echo >&2
-  echo "이 스크립트는 끝나면 'down -v'를 합니다. 그대로 두면 위의 것들이" >&2
-  echo "지워집니다 -- 배포된 스택이라면 데이터베이스와 업로드 파일까지." >&2
-  echo "권한 경계는 CI가 매 커밋 검증하므로 배포 기계에서 돌릴 이유가 없습니다." >&2
-  echo >&2
-  echo "버려도 되는 것이 확실하면: VERIFY_GRANTS_FORCE=1 scripts/verify-grants.sh" >&2
-  [ "${VERIFY_GRANTS_FORCE:-}" = "1" ] || exit 1
-  echo "VERIFY_GRANTS_FORCE=1 -- 계속합니다." >&2
+# Assert the isolation rather than trusting it. `-p` outranks the file's `name:`
+# key, but a future edit could drop the flag, and the damage would show up as
+# someone's deleted uploads rather than as a failing test. Reading the effective
+# project name back from compose makes that edit fail here instead. `config`
+# needs no daemon, so this costs nothing and runs on every invocation -- CI
+# included, which is what keeps it honest.
+effective=$(docker compose -p "$PROJECT" --env-file "$ENV_FILE" \
+  -f deploy/docker-compose.yml config 2>/dev/null | sed -n 's/^name: //p' | head -1)
+deployed=$(sed -n 's/^name: *//p' deploy/docker-compose.yml | head -1)
+
+if [ -z "$effective" ]; then
+  echo "compose 프로젝트 이름을 읽지 못했습니다. docker compose가 있는지 확인하세요." >&2
+  exit 1
+fi
+if [ "$effective" = "$deployed" ]; then
+  echo "이 스크립트가 배포 스택과 같은 compose 프로젝트('$effective')로 돌려고 합니다." >&2
+  echo "cleanup의 'down -v'가 그 프로젝트의 볼륨을 전부 지웁니다 --" >&2
+  echo "배포된 기계라면 데이터베이스와 업로드 파일까지." >&2
+  echo "compose 호출에서 -p 가 빠졌는지 확인하세요." >&2
+  exit 1
 fi
 
 cleanup() {
