@@ -41,6 +41,15 @@ up`이 `port is already allocated`로 실패한다. 환경변수가 없어 `.env
 않았다.** 토큰이 설정된 API에서는 화면의 모든 쓰기가 401이 된다. 배포될 API는 토큰이
 설정된 쪽인데 검증은 꺼진 쪽만 보고 있었다.
 
+**헬스체크가 재던 것이 의존자가 쓰는 것과 달랐다.** CI가 이 PR에서 빨간불이 나서 알았다.
+`mysqladmin ping -h localhost`는 **유닉스 소켓**으로 붙는데, mysql 이미지는 초기화 스크립트를
+도는 동안 `--skip-networking`으로 임시 서버를 띄운다. 그래서 TCP가 닫힌 채로 healthy가 되고,
+`depends_on`이 migrate를 풀어줘서 `mysql:3306`에 `Connection refused`가 났다. 로그의 시각이
+그대로 말해 준다 — 빈 볼륨에서 기동 **5.5초 만에** healthy, 3.5초 뒤 migrate 실패.
+
+`-h 127.0.0.1`로 바꿔 TCP를 강제했다. 초기화 중에는 이 검사가 실패하므로 진짜 서버가 3306에
+붙은 뒤에야 healthy가 된다. **PR #5의 CI는 운으로 통과한 것이었다.**
+
 ### 검증
 
 건수는 `docs/00-requirements-traceability.md`의 「검증 총계」에만 적는다.
