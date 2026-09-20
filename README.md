@@ -63,7 +63,9 @@ http://localhost:8081 을 엽니다.
 위 빠른 시작대로 **가드를 켠 서버**를 띄워 두고, 같은 토큰으로 돌립니다.
 
 ```bash
-cd backend && ./gradlew test                                   # 단위·통합 테스트
+# 저장소 루트에서. 첫 줄을 subshell로 감싼 것은 cd가 셸에 남으면
+# 뒤의 두 줄이 backend/scripts/를 찾기 때문입니다.
+(cd backend && ./gradlew test)                                 # 단위·통합 테스트
 ADMIN_TOKEN=test-secret scripts/verify.sh                      # API 엔드투엔드
 ADMIN_TOKEN=test-secret node scripts/ui-verify.mjs             # 브라우저 (playwright 필요)
 ```

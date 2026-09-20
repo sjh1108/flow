@@ -99,7 +99,8 @@ Spring Boot 4.1 / Java 21 / MySQL 8.4 / 바닐라 JS(무의존).
 cd backend && EXTGUARD_ADMIN_TOKEN=test-secret \
   ./gradlew bootRun --args='--spring.profiles.active=dev'
 
-cd backend && ./gradlew test                                        # 단위·통합
+# 아래 세 줄은 저장소 루트에서. cd를 subshell에 가둬야 뒤의 둘이 경로를 찾는다.
+(cd backend && ./gradlew test)                                      # 단위·통합
 ADMIN_TOKEN=test-secret scripts/verify.sh http://localhost:8080     # 실행 중인 API 필요
 ADMIN_TOKEN=test-secret CHROMIUM=/opt/pw-browsers/chromium \
   node scripts/ui-verify.mjs                                        # 브라우저

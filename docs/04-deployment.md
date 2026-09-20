@@ -304,8 +304,10 @@ cd deploy && cp .env.example .env && docker compose up -d
 3절대로 **가드를 켠 서버**를 띄워 두고, 같은 토큰으로 돌립니다.
 
 ```bash
+# 저장소 루트에서. 1)의 cd를 subshell에 가둬야 2)·3)이 scripts/를 찾습니다.
+
 # 1) 백엔드 단위·통합 테스트
-cd backend && ./gradlew test
+(cd backend && ./gradlew test)
 
 # 2) API 엔드투엔드
 ADMIN_TOKEN=test-secret scripts/verify.sh http://localhost:8080
