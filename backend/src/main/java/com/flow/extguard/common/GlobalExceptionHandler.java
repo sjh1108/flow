@@ -1,5 +1,6 @@
 package com.flow.extguard.common;
 
+import com.flow.extguard.config.StorageProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatusCode;
@@ -21,23 +22,48 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    private final StorageProperties storageProperties;
+
+    public GlobalExceptionHandler(StorageProperties storageProperties) {
+        this.storageProperties = storageProperties;
+    }
+
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiError> handleApiException(ApiException e) {
         return ResponseEntity.status(e.code().status()).body(ApiError.of(e));
     }
 
     /**
-     * The servlet container aborts an oversized upload before the controller is
+     * The servlet container aborts an over-limit upload before the controller is
      * reached. Without this handler the client would get an HTML error page
      * instead of the JSON shape it knows how to render.
+     *
+     * <p><strong>This is a verdict on the request, not on any one file.</strong>
+     * Spring raises {@code MaxUploadSizeExceededException} for a part that is too
+     * large <em>and</em> for a request with too many parts: Tomcat catches
+     * {@code SizeException} and {@code FileCountLimitExceededException} in the
+     * same block, and Spring's {@code handleParseFailure} converts anything whose
+     * {@code toString()} carries "exceed" plus "size"/"count" into this one
+     * exception. So which limit tripped is not recoverable here, and a message
+     * naming only a size would be a guess -- one that reads as a per-file verdict
+     * and, copied onto every row, told a user their 68KB file was too large.
+     *
+     * <p>The message therefore states both limits, and {@code ApiErrorCode}'s
+     * size-only template is deliberately not used. The numbers come from
+     * configuration rather than the literals in this class: the same pair the
+     * upload screen shows and the service enforces.
      */
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     public ResponseEntity<ApiError> handleTooLarge(MaxUploadSizeExceededException e) {
         ApiErrorCode code = ApiErrorCode.FILE_TOO_LARGE;
+        String message = "업로드 요청이 서버 한도를 초과했습니다. 한 번에 최대 %d개, 파일당 최대 %dMB까지 업로드할 수 있습니다."
+                .formatted(storageProperties.getMaxFilesPerRequest(),
+                        storageProperties.getMaxFileSize().toMegabytes());
         return ResponseEntity.status(code.status()).body(ApiError.of(
                 code,
-                code.message("설정된 최대 크기"),
-                "요청이 서버의 multipart 크기 제한을 초과했습니다."));
+                message,
+                "요청이 서버의 multipart 한도(파일당 크기 또는 파트 개수)를 초과해 "
+                        + "파일별 검사 전에 거부됐습니다."));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

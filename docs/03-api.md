@@ -194,11 +194,25 @@ accepted = 0                     → 422
 
 #### 요청 단위 오류
 
+**이 응답에는 `results`가 없습니다.** 어떤 파일도 검사되지 않았기 때문입니다. 클라이언트는
+`results`의 유무로 오류의 주인이 요청인지 파일인지 가릅니다 — 이 구분을 놓치면 요청 단위
+사유가 모든 행에 복사되어, 68KB 파일에까지 "크기 초과"가 붙습니다.
+
 | 상태 | 코드 | 상황 |
 |---|---|---|
 | 400 | `NO_FILE_SUBMITTED` | `files` 파트 없음 |
-| 413 | `TOO_MANY_FILES` | 10개 초과 |
-| 413 | `FILE_TOO_LARGE` | 컨테이너가 컨트롤러 진입 전 거부 |
+| 413 | `TOO_MANY_FILES` | 파일 개수가 `maxFilesPerRequest` 초과. 컨트롤러까지 도달한 경우 |
+| 413 | `FILE_TOO_LARGE` | 컨테이너가 컨트롤러 진입 **전에** 거부. **파트 크기 초과와 파트 개수 초과가 모두 이 코드입니다** |
+
+`FILE_TOO_LARGE`가 두 가지를 겸하는 것은 선택이 아니라 관찰입니다. Tomcat은
+`SizeException`과 `FileCountLimitExceededException`을 같은 catch에서 413으로 묶고, Spring은
+예외 `toString()`에 `exceed` + `size`/`count`가 있으면 둘 다 `MaxUploadSizeExceededException`으로
+바꿉니다. 그래서 **응답만으로는 어느 한도였는지 알 수 없고**, 메시지는 두 한도를 함께
+안내합니다(`ContainerUploadLimitIntegrationTest`에서 실제 Tomcat으로 확인).
+
+파일 개수가 `max-part-count`(12)보다 적으면 컨트롤러가 세어 `TOO_MANY_FILES`로 정확히
+답하고, 그보다 많으면 컨테이너가 먼저 끊어 `FILE_TOO_LARGE`가 됩니다. 이 순서를
+`UploadRequestShapeIntegrationTest#partCapLeavesRoomForTheCountCheck`가 고정합니다.
 
 #### 검사 순서
 
@@ -213,6 +227,19 @@ R5 내용이 실행파일·스크립트
 R6 내용이 확장자와 불일치
 R7 선언 MIME 불일치             ← 기록만, 거부하지 않음
 ```
+
+### `GET /api/v1/files/limits`
+
+요청 하나가 지켜야 할 형태. 인증 불필요.
+
+```json
+{ "maxFilesPerRequest": 10, "maxFileSizeBytes": 20971520 }
+```
+
+화면이 이 숫자를 그대로 안내하고, 전송 전 검사에도 씁니다. 정책 응답의 `limits`와 같은
+이유로 존재합니다 — 설정에 있는 값을 클라이언트가 리터럴로 베껴 적으면 언젠가 어긋납니다.
+**이것은 요청의 형태에 대한 제한이지 파일에 대한 판정이 아닙니다.** 어떤 파일이 허용되는지는
+여전히 서버만 정합니다.
 
 ### `GET /api/v1/files?limit=20`
 

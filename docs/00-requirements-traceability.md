@@ -52,7 +52,7 @@
 | 1-3 | 확장자 없음 / `.env` / 긴 파일명 | `FilenameAnalyzer` | `FilenameAnalyzerTest` (`handlesDotfiles`, `rejectsOverlongFilename`, `measuresLengthInUtf8Bytes`) |
 | 1-4 | 확장자 입력값 검증 (특수문자·공백·유니코드·점) | `ExtensionNormalizer` (NFKC + 정규식) | `ExtensionNormalizerTest` |
 | 1-5 | 서버 사이드 검증 필요성 | 서버가 유일한 판정자, 클라이언트는 항상 전송 | `scripts/verify.sh` (curl로 클라이언트 완전 우회) |
-| 1-6 | 크기 / 개수 제한 | `application.yml` multipart + `max-part-count`<br>`UploadValidator` R2 | `UploadValidatorTest#rejectsOversizedFile` |
+| 1-6 | 크기 / 개수 제한 | `application.yml` multipart + `max-part-count`<br>`UploadValidator` R2, `FileUploadService`(개수)<br>`GET /api/v1/files/limits`로 한도 공개 | `UploadValidatorTest#rejectsOversizedFile`<br>`UploadRequestShapeIntegrationTest` (한도 공개·개수 초과·컨테이너 상한이 개수 검사를 가리지 않음)<br>**`ContainerUploadLimitIntegrationTest`** (실제 Tomcat: 파트 개수·파트 크기가 같은 응답이 됨)<br>`verify.sh` 6절 |
 | 1-7 | 원본 파일명 사용 위험 | `LocalFileStorage` (UUID 경로) | `UploadEnforcementIntegrationTest#storesAcceptedFileUnderGeneratedName`<br>`FilenameAnalyzerTest#stripsPathComponents` |
 | 1-8 | MIME 스푸핑 | `UploadValidator` R7 (기록만) | `UploadValidatorTest#declaredMimeTypeDoesNotCauseRejection` |
 
@@ -73,6 +73,7 @@
 | 3-2 | 로딩 / 에러 / 네트워크 실패 | `frontend/src/api.js` (`NetworkError`/`ApiError` 분리)<br>스켈레톤·재시도 배너·오프라인 감지 | 브라우저 검증 "정상 로드 시 오류 배너가 보이지 않음" |
 | 3-3 | 저장 실패 시 화면·DB 일관성 | 낙관적 UI + 롤백 (`policy.js#toggleFixed`)<br>파일→DB 순서 + 보상 삭제 (`FileUploadService`) | `UploadEnforcementIntegrationTest#rejectedUploadIsLoggedButNotStored` |
 | 3-4 | 접근성 / 반응형 | `aria-live`, `aria-label`, 키보드 드롭존, Grid + 600px 브레이크포인트, 다크모드 | 브라우저 스크린샷 |
+| 3-5 | 요청 단위 오류와 파일 단위 판정의 구분 | 요청 진행 막대 1개·오류 배너 1개, 행은 `전송되지 않음`(`frontend/src/upload.js`)<br>서버가 게시한 한도로 전송 전 검사<br>`GlobalExceptionHandler#handleTooLarge`가 두 한도를 함께 안내 | 브라우저 검증 8절 (행에 복사되지 않음·전송 안 함·막대 1개)<br>`ContainerUploadLimitIntegrationTest`<br>`verify.sh` 6절 |
 
 ### 4. 운영
 
@@ -94,9 +95,9 @@
 
 | 계층 | 건수 | 실행 방법 |
 |---|---|---|
-| 백엔드 단위·통합 테스트 | **195** | `cd backend && ./gradlew test` |
-| API 엔드투엔드 (curl) | **38** | `scripts/verify.sh` |
-| 브라우저 (Playwright + Chromium) | **26** | `docs/04-deployment.md` 참조 |
+| 백엔드 단위·통합 테스트 | **202** | `cd backend && ./gradlew test` |
+| API 엔드투엔드 (curl) | **48** | `scripts/verify.sh` |
+| 브라우저 (Playwright + Chromium) | **39** | `docs/04-deployment.md` 참조 |
 | DB 권한 경계 (실제 MySQL 8.4) | **31** | `scripts/verify-grants.sh` — Docker 필요. 자기 compose 프로젝트로 격리해 돕니다 |
 
 > 마지막 계층은 H2로는 표현할 수 없는 것만 봅니다. 테이블·컬럼 단위 권한과 컨테이너별
