@@ -22,8 +22,11 @@ import org.springframework.web.filter.CorsFilter;
  * 토큰이 필요합니다". The preflight succeeded and only the real request was lost, which
  * is what made it look like the server was broken.
  *
- * <p>As a filter it runs first and adds the headers to every response, including the
- * ones later filters short-circuit.
+ * <p>As a filter it runs before the rest of the chain, so an allowed cross-origin
+ * request carries its CORS headers even when a later filter short-circuits the
+ * response. It handles only what matches {@code /api/**}; a request from an origin
+ * outside the allow-list is rejected with 403 and gets no
+ * {@code Access-Control-Allow-Origin} — which is the point of an allow-list.
  *
  * <p>Credentials are not allowed. The admin guard uses a header rather than a cookie,
  * so there is no reason to open credentialed cross-origin requests and every reason
