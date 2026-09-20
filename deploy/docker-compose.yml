@@ -131,7 +131,12 @@ services:
       - uploads:/var/lib/extguard/files
     ports:
       # Bound to loopback only: Caddy (or an existing reverse proxy) fronts it.
-      - "127.0.0.1:8080:8080"
+      #
+      # Only the host side is configurable. Instances that already run something
+      # on 8080 set APP_HOST_PORT in .env; everywhere else the default keeps the
+      # address this file has always published. The container side stays 8080 --
+      # the Dockerfile's EXPOSE, the healthcheck and Caddy all name that port.
+      - "127.0.0.1:${APP_HOST_PORT:-8080}:8080"
     deploy:
       resources:
         limits:

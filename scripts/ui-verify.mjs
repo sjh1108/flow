@@ -21,7 +21,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 const FRONTEND = process.env.FRONTEND || 'http://127.0.0.1:8081/index.html';
-const API = `${process.env.API || 'http://localhost:8080'}/api/v1/policy/extensions`;
+const API_BASE = process.env.API || 'http://localhost:8080';
+const API = `${API_BASE}/api/v1/policy/extensions`;
 const TOKEN = process.env.ADMIN_TOKEN || '';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'extguard-ui-'));
@@ -67,6 +68,45 @@ const browser = await chromium.launch({
   args: ['--no-sandbox'],
 });
 const page = await browser.newPage({ viewport: { width: 1000, height: 1200 } });
+
+// index.html carries the deployed API origin: Vercel serves the file exactly as
+// committed, with no build step to substitute one. Left alone, this run's
+// browser would drive the deployed system while the setup fetches above talk to
+// API_BASE -- asserting against one system while changing another, and against
+// production at that.
+//
+// The tag is rewritten while the document is being parsed. main.js is a module,
+// so it is deferred and runs after parsing; a MutationObserver installed before
+// any page script sees the tag appear and fixes it in time. Rewriting the HTML
+// through page.route() would do the same job, but request interception left the
+// page's first API call hanging on the pre-installed Chromium build, which is a
+// different revision from the playwright package (see CLAUDE.md).
+await page.addInitScript(({ base, token }) => {
+  // config.js reads the token from this key. Without it the page is anonymous,
+  // so every write in sections 2 and 3 comes back 401 against an API that has
+  // EXTGUARD_ADMIN_TOKEN set -- which a deployed one does. The script already
+  // takes ADMIN_TOKEN for its own fetches; the browser needs the same one.
+  if (token) {
+    try {
+      localStorage.setItem('extguard.adminToken', token);
+    } catch {
+      /* Private browsing or blocked storage: the page stays anonymous. */
+    }
+  }
+
+  const observer = new MutationObserver((records) => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType === 1 && node.tagName === 'META' && node.getAttribute('name') === 'api-base') {
+          node.setAttribute('content', base);
+          observer.disconnect();
+          return;
+        }
+      }
+    }
+  });
+  observer.observe(document, { childList: true, subtree: true });
+}, { base: API_BASE, token: TOKEN });
 
 const scriptErrors = [];
 page.on('pageerror', (e) => scriptErrors.push(String(e)));

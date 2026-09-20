@@ -26,10 +26,21 @@ APP_PW=apppw0123456789
 # migrator doing it. Alphanumeric by design -- mysql-init/01-users.sh rejects
 # anything that would need quoting.
 ENV_FILE="$(mktemp)"
+
+# Deliberately not the default 8080. The published host port is a variable that
+# an operator has to set on any instance already running something on 8080, and
+# a run that only ever used the default would never execute that substitution --
+# the one thing the variable exists for. Using it here means the compose file
+# renders the override on every commit, and the health check below proves the
+# app is reachable at it. 8080 stays covered by every other environment.
+APP_PORT=18080
+API="http://localhost:$APP_PORT"
+
 cat > "$ENV_FILE" <<ENV
 MYSQL_ROOT_PASSWORD=$ROOT_PW
 MIGRATOR_PASSWORD=$MIGRATOR_PW
 APP_DB_PASSWORD=$APP_PW
+APP_HOST_PORT=$APP_PORT
 EXTGUARD_ADMIN_TOKEN=
 CORS_ALLOWED_ORIGINS=http://localhost:5173
 API_DOMAIN=localhost
@@ -92,7 +103,7 @@ if ! compose up -d --build; then
 fi
 
 for _ in $(seq 1 90); do
-  curl -sf http://localhost:8080/actuator/health >/dev/null 2>&1 && break
+  curl -sf "$API/actuator/health" >/dev/null 2>&1 && break
   sleep 2
 done
 
@@ -117,7 +128,7 @@ printf '%s' "$accounts" | grep -q extguard_app; check $? \
 printf '%s' "$accounts" | grep -q extguard_migrator; check $? \
   "extguard_migrator 생성" "$accounts"
 
-health=$(curl -sf http://localhost:8080/actuator/health 2>&1)
+health=$(curl -sf "$API/actuator/health" 2>&1)
 printf '%s' "$health" | grep -q '"status":"UP"'; check $? \
   "앱이 기동" "$health"
 
