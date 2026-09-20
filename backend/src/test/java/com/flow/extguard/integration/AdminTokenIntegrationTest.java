@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -31,6 +32,25 @@ class AdminTokenIntegrationTest extends IntegrationTestBase {
                         .content("{\"extension\": \"sh\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
+
+    /**
+     * The 401 is written from the filter chain, before the servlet runs. CORS used to
+     * be applied inside the servlet, so that response went out with no
+     * Access-Control-Allow-Origin: a browser discarded it and the page reported a
+     * network failure instead of a permission problem. Every other layer missed this
+     * -- MockMvc and curl read the 401 happily because neither enforces CORS -- so the
+     * assertion here is the header, not the status.
+     */
+    @Test
+    @DisplayName("the rejection is readable by the browser that asked for it")
+    void unauthorizedResponseCarriesCorsHeader() throws Exception {
+        mockMvc.perform(post("/api/v1/policy/extensions/custom")
+                        .header("Origin", "http://localhost:5173")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"extension\": \"sh\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"));
     }
 
     @Test

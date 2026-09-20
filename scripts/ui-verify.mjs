@@ -228,6 +228,46 @@ check('오류 코드가 STORAGE_QUOTA_EXCEEDED',
   (await readQuota('.result-code')).trim() === 'STORAGE_QUOTA_EXCEEDED');
 await page.unroute('**/api/v1/files');
 
+/* ------------------------------------------------------------------ *
+ * 7. 권한 없는 쓰기
+ *
+ * A token-carrying page can never reach this. Every section above seeds the
+ * admin token, so the 401 path was walked by nothing -- and that is how a real
+ * break reached production: the filter answers from the chain, so its 401 went
+ * out with no CORS header, the browser discarded it, and the page reported a
+ * network failure instead of a permission problem. MockMvc and curl both read
+ * that 401 happily, because neither enforces CORS. Only a browser sees it.
+ *
+ * A fresh context with no token in storage is what makes this measurable.
+ * ------------------------------------------------------------------ */
+console.log('\n7. 권한 없는 쓰기');
+
+if (TOKEN) {
+  const anonContext = await browser.newContext();
+  const anonPage = await anonContext.newPage();
+  const corsBlocked = [];
+  anonPage.on('console', (message) => {
+    if (message.text().includes('CORS')) corsBlocked.push(message.text());
+  });
+
+  await anonPage.goto(PAGE, { waitUntil: 'networkidle' });
+  await anonPage.waitForSelector('.chip input', { timeout: 15000 });
+  await anonPage.locator('.chip input').first().check();
+  await anonPage.waitForSelector('.toast', { timeout: 15000 });
+
+  const toastText = (await anonPage.locator('.toast').first().textContent()) ?? '';
+  check('토큰 없이 토글하면 권한 안내가 뜸', toastText.includes('관리자 토큰이 필요합니다'), toastText);
+  check('CORS로 차단되지 않음 (401이 브라우저에 도달)', corsBlocked.length === 0, corsBlocked[0] ?? '');
+
+  const reverted = await anonPage.locator('.chip input').first().isChecked();
+  check('거절된 토글은 원래 상태로 되돌아감', reverted === false);
+
+  await anonContext.close();
+} else {
+  check('토큰 없이 토글하면 권한 안내가 뜸', false,
+    'ADMIN_TOKEN 미설정 — 서버의 가드가 꺼져 있어 이 경우를 잴 수 없습니다');
+}
+
 if (process.env.SCREENSHOT) {
   await page.screenshot({ path: process.env.SCREENSHOT, fullPage: true });
   console.log(`\n  스크린샷: ${process.env.SCREENSHOT}`);

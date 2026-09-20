@@ -766,6 +766,38 @@ Chromium이 playwright 패키지와 리비전이 달라서, 가로채기를 켜�
 토큰이 설정된 API에서는 화면의 모든 쓰기가 401이 됐습니다. **배포되는 API는 토큰이 설정된
 쪽인데 검증은 꺼진 쪽만 보고 있었습니다.**
 
+#### 4-7. 필터에서 응답을 쓰면 CORS가 붙지 않는다
+
+배포된 화면에서 관리자 토큰 없이 확장자를 토글하면 **"관리자 토큰이 필요합니다"가 아니라
+"서버에 연결할 수 없습니다"**가 떴습니다. 권한 문제가 네트워크 문제로 보고된 것입니다.
+
+CORS를 `WebMvcConfigurer.addCorsMappings`로만 설정하면 **DispatcherServlet 안의
+HandlerMapping**이 적용합니다. `AdminTokenFilter`는 그보다 앞단에서 401을 직접 쓰고 체인을
+끊으므로, 그 응답에는 `Access-Control-Allow-Origin`이 붙지 않습니다. 크로스 오리진이면
+브라우저가 그 응답을 버리고 `fetch`가 거부되어, 프론트는 `NetworkError`로 처리합니다.
+
+허용된 오리진으로 측정한 것:
+
+| | 상태 | `Access-Control-Allow-Origin` |
+|---|---|---|
+| 토큰 없음 (필터 단락) | 401 | **없음** |
+| 토큰 있음 (서블릿 도달) | 200 | 있음 |
+| 프리플라이트 (`OPTIONS` 면제) | 200 | 있음 |
+
+**프리플라이트는 통과하고 본 요청만 사라집니다.** 그래서 서버가 고장난 것처럼 보입니다.
+
+`CorsFilter`를 `HIGHEST_PRECEDENCE`로 올려 고쳤습니다. 설정값은 `CorsProperties`를 그대로
+재사용하므로 허용 목록이 갈라지지 않습니다. `AdminTokenFilter`에는 순서를 명시해, 나중에
+누가 앞으로 당기면 그 주석과 부딪치게 했습니다. **필터에서 응답을 직접 쓰는 코드가 생길
+때마다 같은 함정이 있습니다** — 그 응답도 브라우저가 읽을 수 있어야 합니다.
+
+**세 계층이 전부 이 경우를 못 보고 있었습니다.** MockMvc와 curl은 CORS를 강제하지 않아
+401을 그대로 읽고, 브라우저 검증은 **토큰을 항상 심고 시작해** 401 경로를 한 번도 밟지
+않았습니다. 그래서 고치는 것과 함께 그 공백을 메웠습니다 — 통합 테스트는 401 응답의
+헤더를 단언하고(`AdminTokenIntegrationTest#unauthorizedResponseCarriesCorsHeader`),
+브라우저 검증에는 토큰 없는 컨텍스트로 토글하는 7절을 두었습니다. 둘 다 **옛 설정으로
+되돌리면 실패하는 것을 확인**했습니다. 그 확인이 없으면 단언이 무엇을 재는지 알 수 없습니다.
+
 #### 4-5. 향후 확장
 
 - **사용자별 정책**: `fixed_extension_state`/`custom_extension`에 `owner_id`를 추가하고 UNIQUE를 `(owner_id, extension)`으로 변경. 감사 로그의 `actor`는 이미 사용자 ID를 받을 수 있는 형태.
