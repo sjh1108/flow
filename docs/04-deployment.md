@@ -89,12 +89,37 @@ server {
 }
 ```
 
+파일을 어디에 둘지는 박스마다 다릅니다. `nginx.conf`가 무엇을 include하는지 먼저 보세요 — 읽지 않는 디렉터리에 넣으면 파일이 **조용히 무시되고** 요청은 계속 기존 블록으로 갑니다.
+
+```bash
+grep -n "include" /etc/nginx/nginx.conf     # conf.d/*.conf 인지 sites-enabled/* 인지
+```
+
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
 # 인증서 발급 전에, 이 이름이 기존 블록이 아니라 여기로 오는지 먼저 확인합니다
-curl -s http://api.example.com/actuator/health
+curl -s http://api.example.com/api/v1/policy/extensions
 sudo certbot --nginx -d api.example.com
 ```
+
+고정 확장자 7개가 돌아오면 이 블록이 잡은 것입니다. 기존 프로젝트의 응답이나 404가 나오면 catch-all에 먹힌 것이므로, certbot을 돌리기 전에 그것부터 해결해야 합니다 — 먼저 발급하면 엉뚱한 블록에 인증서가 붙습니다.
+
+**certbot은 이 파일을 다시 씁니다.** 443 블록을 새로 만들면서 `client_max_body_size`를 옮겨 놓았는지 확인하세요.
+
+```bash
+grep -n "listen\|server_name\|client_max_body_size" /etc/nginx/conf.d/extguard-api.conf
+```
+
+`verify.sh`에는 크기 검사가 없으므로 **이 한도는 38건이 덮지 않습니다.** 앱 한도(20MB) 아래의 파일이 통과하는지 직접 한 번 재는 편이 빠릅니다.
+
+```bash
+head -c 18000000 /dev/urandom > /tmp/big.txt
+curl -s -w "\nHTTP %{http_code}\n" -F "files=@/tmp/big.txt;filename=big.txt" \
+  https://api.example.com/api/v1/files | tail -c 300
+rm /tmp/big.txt
+```
+
+JSON이 돌아오면 nginx가 통과시키고 앱이 판정한 것입니다. `<html>` 413 페이지가 나오면 `client_max_body_size`가 443 블록에 없는 것입니다.
 
 ### 배포
 
@@ -195,6 +220,28 @@ ADMIN_TOKEN=<토큰> ../scripts/verify.sh https://api.example.com
 ```bash
 docker compose up -d app
 ```
+
+**앱이 떴다는 것은 CORS 값이 맞다는 뜻이 아닙니다.** 값을 비워둔 채 재시작해도 기동 로그는 똑같습니다. 실제로 재는 것은 이 둘입니다.
+
+```bash
+docker compose exec app printenv CORS_ALLOWED_ORIGINS        # 앱이 받은 값 자체
+curl -s -o /dev/null -D- -H "Origin: https://<vercel-도메인>" \
+  https://<api-도메인>/api/v1/policy/extensions | grep -i "access-control-allow-origin"
+```
+
+둘째 줄이 오리진을 그대로 돌려주지 않으면 브라우저가 모든 호출을 차단합니다 — 화면은 뜨는데 체크박스가 0개인 상태가 됩니다.
+
+---
+
+## 2-1. 배포 직후에 해야 하는 것 — 화면에 관리자 토큰 넣기
+
+**`.env`에 `EXTGUARD_ADMIN_TOKEN`을 넣는 것만으로는 화면에서 정책을 바꿀 수 없습니다.** 그 값은 서버가 요구하는 쪽이고, 브라우저는 자기가 가진 토큰을 헤더로 보내야 합니다. 화면 상단 **「관리자 토큰」** 입력란에 같은 값을 한 번 넣어야 합니다. `localStorage`에만 저장되고 서버로는 `X-Admin-Token` 헤더로만 나갑니다.
+
+```bash
+grep '^EXTGUARD_ADMIN_TOKEN=' deploy/.env | cut -d= -f2-
+```
+
+이걸 놓치면 증상이 헷갈립니다. **업로드는 되는데 체크박스만 눌러도 원래대로 돌아옵니다.** 쓰기 엔드포인트만 인증을 요구하고, 화면은 낙관적 UI라 401을 받으면 되돌리기 때문입니다. 실제 배포에서 여기서 한 번 멈췄습니다.
 
 ---
 

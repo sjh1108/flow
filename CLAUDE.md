@@ -129,12 +129,23 @@ CHROMIUM=/opt/pw-browsers/chromium node scripts/ui-verify.mjs   # 브라우저
 | DB 마이그레이션 | one-shot 컨테이너로 분리 |
 | CAFEBABE 심화 구조 검증 | 보류 (`.class`/`.dylib` 지원이 실제 요구가 될 때 재검토) |
 
+## 배포 상태
+
+`api.algoj.duckdns.org` (nginx → `127.0.0.1:18080`, Let's Encrypt) + Vercel 프론트로
+운영 중. 배포 절차와 **배포 직후 화면에 관리자 토큰을 넣어야 하는 단계**는
+`docs/04-deployment.md`.
+
 ## 남은 작업 (순서대로, 각각 별도 PR)
 
-1. ~~CI — GitHub Actions~~ (이 PR)
-2. **저장소 고갈 방어** — 쿼터 10GB / 보존 30일 cleanup, 고아 파일 정리,
-   `transferTo()` 실패 시 부분 파일(temp + ATOMIC_MOVE)
-3. **DB 권한 분리 실효화** — one-shot 마이그레이션 컨테이너, 앱 환경변수에서
-   `SPRING_FLYWAY_*` 제거
+1. ~~CI — GitHub Actions~~
+2. ~~저장소 고갈 방어~~ — 쿼터 10GB / 보존 30일 cleanup, 고아 파일 정리, 부분 파일
+3. ~~DB 권한 분리 실효화~~ — one-shot 마이그레이션 컨테이너, `SPRING_FLYWAY_*` 제거
+4. ~~배포 (호스트 포트 설정값화, 실제 도메인)~~
+5. **관리자 인증을 JWT 세션으로** — 토큰 검사에 성공하면 JWT를 발급해 로그인처럼 쓴다.
+   **이건 보안 강화가 아니라 만료와 로그인 UX를 얻는 변경이다.** 정적 토큰은 그대로
+   남고, 둘 다 `localStorage`에 있으므로 XSS 앞에서는 더 안전하지 않으며, 무상태 JWT는
+   만료 전 취소가 안 된다(지금은 환경변수 교체로 즉시 무효화된다). 그 이상으로 서술하지
+   말 것. 근거와 검토 항목은 `tasks/todo.md`.
 
-미결 항목: CAFEBABE 심화 구조 검증, OLE 복합 문서 시그니처(`D0CF11E0A1B11AE1`) 추가.
+미결 항목: CAFEBABE 심화 구조 검증, OLE 복합 문서 시그니처(`D0CF11E0A1B11AE1`) 추가,
+`EXPLAIN`으로 V4 인덱스 확인, 고아 스윕 스트리밍.
